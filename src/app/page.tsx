@@ -36,7 +36,7 @@ export default function Home() {
       <footer className="border-t border-[#2A2A2A] mt-24">
         <div className="max-w-7xl mx-auto px-6 py-8">
           <p className="text-sm text-[#666] text-center">
-            Database interface for 12 sweepstakes gaming platforms
+            © 2026 Kings Fortune Hub. All rights reserved.
           </p>
         </div>
       </footer>

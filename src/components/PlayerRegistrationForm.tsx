@@ -111,6 +111,25 @@ const GAMES: Game[] = [
   },
 ];
 
+interface GeneratedAccount {
+  platform: string;
+  code: GameCode;
+  emoji: string;
+  generatedID: string;
+}
+
+interface RegistrationPayload {
+  facebookName: string;
+  facebookLink: string;
+  referralName: string | null;
+  accounts: Omit<GeneratedAccount, "emoji">[];
+}
+
+type SyncStatus =
+  | { state: "saving" }
+  | { state: "saved"; row: number; unmapped: string[] }
+  | { state: "error"; message: string };
+
 export function PlayerRegistrationForm() {
   const [facebookName, setFacebookName] = useState("");
   const [facebookLink, setFacebookLink] = useState("");
@@ -120,7 +139,12 @@ export function PlayerRegistrationForm() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [randomNumber, setRandomNumber] = useState<number>(0);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
-  const [generatedAccounts, setGeneratedAccounts] = useState<any[]>([]);
+  const [generatedAccounts, setGeneratedAccounts] = useState<GeneratedAccount[]>(
+    [],
+  );
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>({ state: "saving" });
+  const [pendingPayload, setPendingPayload] =
+    useState<RegistrationPayload | null>(null);
 
   useEffect(() => {
     setIsClient(true);
@@ -162,32 +186,62 @@ export function PlayerRegistrationForm() {
     }
   };
 
+  const syncToSheet = async (payload: RegistrationPayload) => {
+    setSyncStatus({ state: "saving" });
+    try {
+      const res = await fetch("/api/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || `Request failed (${res.status})`);
+      }
+      setSyncStatus({
+        state: "saved",
+        row: data.row,
+        unmapped: data.unmappedPlatforms ?? [],
+      });
+    } catch (err) {
+      setSyncStatus({
+        state: "error",
+        message: err instanceof Error ? err.message : "Network error",
+      });
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    const accounts = Array.from(selectedGames).map((code) => {
-      const game = GAMES.find((g) => g.code === code)!;
-      return {
-        platform: game.name,
-        code: game.code,
-        emoji: game.emoji,
-        generatedID: generateUsername(game),
-      };
-    });
+    const accounts: GeneratedAccount[] = Array.from(selectedGames).map(
+      (code) => {
+        const game = GAMES.find((g) => g.code === code)!;
+        return {
+          platform: game.name,
+          code: game.code,
+          emoji: game.emoji,
+          generatedID: generateUsername(game),
+        };
+      },
+    );
 
-    const payload = {
-      facebookName,
-      facebookLink,
-      referralName: referralName || null,
-      accounts,
-      timestamp: new Date().toISOString(),
+    const payload: RegistrationPayload = {
+      facebookName: facebookName.trim(),
+      facebookLink: facebookLink.trim(),
+      referralName: referralName.trim() || null,
+      accounts: accounts.map(({ platform, code, generatedID }) => ({
+        platform,
+        code,
+        generatedID,
+      })),
     };
 
-    console.log("📊 Syncing to Google Sheets:", payload);
-
-    // Show success modal with generated IDs
+    // Show IDs immediately; sheet sync runs in the background.
     setGeneratedAccounts(accounts);
+    setPendingPayload(payload);
     setShowSuccessModal(true);
+    void syncToSheet(payload);
 
     // Reset form
     setFacebookName("");
@@ -355,7 +409,7 @@ export function PlayerRegistrationForm() {
                     />
                   </svg>
                 </div>
-                <div>
+                <div className="min-w-0 flex-1">
                   <h3 className="text-2xl font-bold text-[#D4AF37]">
                     Registration Complete!
                   </h3>
@@ -363,7 +417,19 @@ export function PlayerRegistrationForm() {
                     Your gaming IDs are ready
                   </p>
                 </div>
+                <SyncBadge status={syncStatus} />
               </div>
+              {syncStatus.state === "error" && (
+                <p className="mt-3 text-xs text-red-400 break-words">
+                  Sheet sync failed: {syncStatus.message}
+                </p>
+              )}
+              {syncStatus.state === "saved" &&
+                syncStatus.unmapped.length > 0 && (
+                  <p className="mt-3 text-xs text-amber-400">
+                    No matching column for: {syncStatus.unmapped.join(", ")}
+                  </p>
+                )}
             </div>
 
             {/* Generated IDs */}
@@ -430,10 +496,20 @@ export function PlayerRegistrationForm() {
             </div>
 
             {/* Footer */}
-            <div className="p-6 border-t border-[#2A2A2A] bg-[#0B0B0B]">
+            <div className="p-6 border-t border-[#2A2A2A] bg-[#0B0B0B] flex gap-3">
+              {syncStatus.state === "error" && pendingPayload && (
+                <button
+                  type="button"
+                  onClick={() => void syncToSheet(pendingPayload)}
+                  className="flex-1 px-6 py-3 border border-[#D4AF37] text-[#D4AF37] hover:bg-[#D4AF37]/10 font-semibold rounded-lg transition-all active:scale-[0.98]"
+                >
+                  Retry Sheet Sync
+                </button>
+              )}
               <button
+                type="button"
                 onClick={() => setShowSuccessModal(false)}
-                className="w-full px-6 py-3 bg-[#D4AF37] hover:bg-[#C5A059] text-[#0B0B0B] font-semibold rounded-lg transition-all active:scale-[0.98] shadow-lg shadow-[#D4AF37]/20"
+                className="flex-1 px-6 py-3 bg-[#D4AF37] hover:bg-[#C5A059] text-[#0B0B0B] font-semibold rounded-lg transition-all active:scale-[0.98] shadow-lg shadow-[#D4AF37]/20"
               >
                 Close
               </button>
@@ -469,5 +545,56 @@ export function PlayerRegistrationForm() {
         }
       `}</style>
     </>
+  );
+}
+
+function SyncBadge({ status }: { status: SyncStatus }) {
+  if (status.state === "saving") {
+    return (
+      <span className="shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs border border-[#3A3A3A] bg-[#0B0B0B] text-[#C5C5C5]">
+        <span className="w-3.5 h-3.5 rounded-full border-2 border-[#D4AF37] border-t-transparent animate-spin" />
+        Saving to sheet
+      </span>
+    );
+  }
+
+  if (status.state === "saved") {
+    return (
+      <span className="shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs border border-emerald-500/40 bg-emerald-500/10 text-emerald-400">
+        <svg
+          className="w-3.5 h-3.5"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2.5}
+            d="M5 13l4 4L19 7"
+          />
+        </svg>
+        Saved · row {status.row}
+      </span>
+    );
+  }
+
+  return (
+    <span className="shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs border border-red-500/40 bg-red-500/10 text-red-400">
+      <svg
+        className="w-3.5 h-3.5"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2.5}
+          d="M6 18L18 6M6 6l12 12"
+        />
+      </svg>
+      Not saved
+    </span>
   );
 }
