@@ -160,21 +160,45 @@ async function appendRegistrationUnlocked(
     throw new Error(`Could not find a "Facebook Link" header in tab "${tab}".`);
   }
 
-  // 3. First data row below all header rows where FB Name is empty.
-  let rowIdx = lastHeaderRow + 1;
-  while (
-    rowIdx < rows.length &&
-    (rows[rowIdx][fbNameCol] ?? "").trim() !== ""
-  ) {
-    rowIdx++;
+  // 3. Check if player already exists (by FB Name match)
+  const dataStartRow = lastHeaderRow + 1;
+  const targetName = payload.facebookName.trim().toLowerCase();
+  let existingRowIdx = -1;
+
+  for (let r = dataStartRow; r < rows.length; r++) {
+    const existingName = (rows[r]?.[fbNameCol] ?? "").trim().toLowerCase();
+    if (existingName === targetName) {
+      existingRowIdx = r;
+      break;
+    }
+  }
+
+  // If player exists, update that row. Otherwise, find first empty row.
+  let rowIdx: number;
+  if (existingRowIdx !== -1) {
+    rowIdx = existingRowIdx;
+  } else {
+    rowIdx = dataStartRow;
+    while (
+      rowIdx < rows.length &&
+      (rows[rowIdx][fbNameCol] ?? "").trim() !== ""
+    ) {
+      rowIdx++;
+    }
   }
   const sheetRow = rowIdx + 1; // 1-based
-  const dataStartRow = lastHeaderRow + 1;
 
   // 4. Build the row. `null` = leave cell untouched.
   const width =
     Math.max(...columnMap.values(), fbNameCol, fbLinkCol, referredByCol) + 1;
   const out: (string | number | null)[] = new Array(width).fill(null);
+
+  // If updating existing row, preserve existing data
+  if (existingRowIdx !== -1 && rows[existingRowIdx]) {
+    for (let c = 0; c < width; c++) {
+      out[c] = rows[existingRowIdx][c] ?? null;
+    }
+  }
 
   // Column A numbering (1, 2, 3, …) when A has no header label.
   if (!columnMap.has(normalizeHeader(rows[dataStartRow]?.[0] ?? ""))) {
@@ -183,8 +207,8 @@ async function appendRegistrationUnlocked(
 
   out[fbNameCol] = payload.facebookName.trim();
   out[fbLinkCol] = payload.facebookLink.trim();
-  if (referredByCol !== -1) {
-    out[referredByCol] = payload.referralName?.trim() || null;
+  if (referredByCol !== -1 && payload.referralName) {
+    out[referredByCol] = payload.referralName.trim();
   }
 
   const unmappedPlatforms: string[] = [];
@@ -194,7 +218,10 @@ async function appendRegistrationUnlocked(
       unmappedPlatforms.push(account.platform);
       continue;
     }
-    out[col] = account.generatedID;
+    // Only write if cell is empty (preserve existing IDs, add new ones)
+    if (!out[col] || (out[col] as string).trim() === "") {
+      out[col] = account.generatedID;
+    }
   }
 
   // 5. Write the single row.
