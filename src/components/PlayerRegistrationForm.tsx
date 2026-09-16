@@ -285,10 +285,8 @@ export function PlayerRegistrationForm() {
               )}
             </div>
             <p className="text-xs text-[#666] mb-3">
-              Tap to toggle. IDs are generated and saved to the sheet on submit.
-              {existingPlayer && (
-                <> Games marked ✓ already have an ID for this player.</>
-              )}
+              Tap to toggle. IDs are generated on submit.
+              {existingPlayer && <> Games marked ✓ already have an ID.</>}
             </p>
             <div className="flex flex-wrap gap-2">
               {GAMES.map((game) => {
@@ -346,9 +344,14 @@ export function PlayerRegistrationForm() {
             `}
           >
             {existingPlayer
-              ? `Add IDs to ${existingPlayer.facebookName} (row ${existingPlayer.row})`
+              ? `Add IDs to ${existingPlayer.facebookName}`
               : "Complete Registration & Get IDs"}
           </button>
+          {existingPlayer && (
+            <p className="text-[11px] text-[#666] text-center -mt-2">
+              New IDs are added to this account. Existing IDs are never changed.
+            </p>
+          )}
         </div>
       </form>
 
@@ -413,7 +416,7 @@ function LookupPanel({
     return (
       <p className="text-xs text-[#888] inline-flex items-center gap-2">
         <span className="w-3 h-3 rounded-full border-2 border-[#D4AF37] border-t-transparent animate-spin" />
-        Checking the sheet for this player…
+        Checking for an existing account…
       </p>
     );
   }
@@ -421,94 +424,127 @@ function LookupPanel({
   if (lookup.state === "none") {
     return (
       <p className="text-xs text-[#888]">
-        No existing player found — a new row will be created.
+        No existing account — a new player will be created.
       </p>
     );
   }
 
   if (lookup.state === "error") {
     return (
-      <p className="text-xs text-amber-400 break-words">
-        Couldn&apos;t check for duplicates: {lookup.message}. Submit will still
-        de-duplicate on the server.
+      <p className="text-xs text-amber-400/80">
+        Couldn&apos;t check for an existing account. Duplicates are still
+        prevented on submit.
       </p>
     );
   }
 
   const { player } = lookup;
+  const canDismiss = player.matchedBy === "name";
+
+  if (forceNew) {
+    return (
+      <div className="flex items-center justify-between gap-3 text-xs">
+        <p className="text-[#888]">Registering as a new player.</p>
+        <button
+          type="button"
+          onClick={onToggleForceNew}
+          className="text-[#777] hover:text-[#D4AF37] transition-colors"
+        >
+          Undo
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div
-      className={`rounded-md border p-4 space-y-3 ${
-        forceNew
-          ? "border-[#3A3A3A] bg-[#0B0B0B]"
-          : "border-[#D4AF37]/50 bg-[#D4AF37]/5"
-      }`}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-[#D4AF37]">
-            {forceNew ? "Ignoring existing player" : "Existing player found"}
+    <section aria-label="Verified account" className="space-y-2">
+      <article className="rounded-md border border-[#2A2A2A] bg-[#0B0B0B] p-4 space-y-3">
+        <header className="flex items-center justify-between gap-3">
+          <p className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.08em] text-[#8A8A8A]">
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 16 16"
+              className="w-3.5 h-3.5 text-[#D4AF37]"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.5}
+            >
+              <circle cx="8" cy="8" r="6.25" />
+              <path
+                d="M5.25 8.25 7 10l3.75-4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            Verified Account
           </p>
-          <p className="text-xs text-[#AAA] mt-0.5 break-words">
-            {player.facebookName} · row {player.row} · matched by{" "}
-            {player.matchedBy === "link" ? "Facebook link" : "name"}
-          </p>
-          {player.matchedBy === "name" && (
-            <p className="text-xs text-[#777] mt-0.5 break-all">
-              Sheet link: {player.facebookLink || "—"}
-            </p>
+        </header>
+
+        <div className="flex items-center gap-2 min-w-0">
+          <h3 className="text-sm text-[#E5E5E5] font-medium truncate">
+            {player.facebookName}
+          </h3>
+          {player.facebookLink && (
+            <a
+              href={player.facebookLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Open Facebook profile"
+              title="Open Facebook profile"
+              className="shrink-0 text-[#666] hover:text-[#D4AF37] transition-colors"
+            >
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 16 16"
+                className="w-3.5 h-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.5}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M6.5 3.5H3.75A1.25 1.25 0 0 0 2.5 4.75v7.5a1.25 1.25 0 0 0 1.25 1.25h7.5a1.25 1.25 0 0 0 1.25-1.25V9.5" />
+                <path d="M9.5 2.5h4v4M13.5 2.5 7.5 8.5" />
+              </svg>
+            </a>
           )}
         </div>
-        {player.matchedBy === "name" && (
-          <label className="shrink-0 inline-flex items-center gap-2 text-xs text-[#C5C5C5] cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={forceNew}
-              onChange={onToggleForceNew}
-              className="accent-[#D4AF37]"
-            />
-            Different person
-          </label>
-        )}
-      </div>
 
-      {!forceNew && (
-        <>
-          {player.accounts.length === 0 ? (
-            <p className="text-xs text-[#888]">No IDs recorded yet.</p>
-          ) : (
-            <ul className="flex flex-wrap gap-2">
-              {player.accounts.map((a) => (
+        {player.accounts.length > 0 ? (
+          <ul className="flex flex-wrap gap-1.5" aria-label="Active games">
+            {player.accounts.map((a) => {
+              const key = `lookup-${a.code}`;
+              return (
                 <li key={a.code}>
                   <button
                     type="button"
-                    onClick={() => onCopy(a.id, `lookup-${a.code}`)}
-                    title="Copy ID"
-                    className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md border border-[#2A2A2A] bg-[#0B0B0B] hover:border-[#D4AF37]/60 transition-colors"
+                    onClick={() => onCopy(a.id, key)}
+                    title={`${a.id} — click to copy`}
+                    className="inline-flex items-center px-2 py-0.5 rounded-full border border-[#2A2A2A] text-[11px] leading-5 text-[#9A9A9A] hover:border-[#3A3A3A] hover:text-[#C5C5C5] transition-colors"
                   >
-                    <span className="text-xs text-[#888]">
-                      {GAME_BY_CODE.get(a.code)?.emoji} {a.platform}
-                    </span>
-                    <span className="text-xs font-mono text-[#D4AF37]">
-                      {copiedId === `lookup-${a.code}` ? "Copied" : a.id}
-                    </span>
+                    {copiedId === key ? "Copied" : a.platform}
                   </button>
                 </li>
-              ))}
-            </ul>
-          )}
-          <p className="text-xs text-[#888]">
-            New games will be added to this row with the same number as their
-            existing IDs. Nothing already in the sheet gets overwritten.
-          </p>
-        </>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="text-xs text-[#666]">No game IDs yet.</p>
+        )}
+      </article>
+
+      {canDismiss && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={onToggleForceNew}
+            className="text-xs text-[#777] hover:text-[#C5C5C5] transition-colors"
+          >
+            Not this person? Register as new
+          </button>
+        </div>
       )}
-      {forceNew && (
-        <p className="text-xs text-amber-400">
-          A brand-new row will be created even though the name matches.
-        </p>
-      )}
-    </div>
+    </section>
   );
 }
 
@@ -530,7 +566,7 @@ function ResultModal({
   const saved = submit.state === "saved" ? submit.result : null;
   const title =
     submit.state === "saving"
-      ? "Saving to sheet…"
+      ? "Saving…"
       : submit.state === "error"
         ? "Could not save"
         : saved?.isExisting
@@ -538,14 +574,12 @@ function ResultModal({
           : "Registration Complete!";
   const subtitle =
     submit.state === "saving"
-      ? "Generating IDs and writing the row"
+      ? "Generating IDs"
       : submit.state === "error"
         ? "No IDs were issued. Fix the problem and retry."
         : saved?.isExisting
-          ? `Existing row ${saved.row} updated (matched by ${
-              saved.matchedBy === "link" ? "Facebook link" : "name"
-            })`
-          : `Saved as a new player in row ${saved?.row}`;
+          ? "Existing account updated"
+          : "Saved as a new player";
 
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
@@ -679,8 +713,7 @@ function ResultModal({
 
           {submit.state === "error" && (
             <p className="text-sm text-[#AAA]">
-              Your form entries are still filled in. Retry, or close and check
-              the sheet / credentials.
+              Your form entries are still filled in. Retry or close.
             </p>
           )}
         </div>
