@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server";
 import { isGameCode, type GameCode } from "@/lib/games";
 import { registerPlayer, type RegistrationPayload } from "@/lib/sheets";
+import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,7 +16,8 @@ function validate(body: unknown): RegistrationPayload | string {
   const b = body as Record<string, unknown>;
 
   if (!isNonEmptyString(b.facebookName)) return "facebookName is required";
-  if (!isNonEmptyString(b.facebookLink, 2000)) return "facebookLink is required";
+  if (!isNonEmptyString(b.facebookLink, 2000))
+    return "facebookLink is required";
 
   if (
     b.referralName !== undefined &&
@@ -53,7 +54,10 @@ export async function POST(req: Request) {
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ ok: false, error: "Invalid JSON" }, { status: 400 });
+    return NextResponse.json(
+      { ok: false, error: "Invalid JSON" },
+      { status: 400 },
+    );
   }
 
   const parsed = validate(body);

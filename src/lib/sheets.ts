@@ -1,14 +1,14 @@
 import { JWT } from "google-auth-library";
 import {
-  GAME_BY_CODE,
-  GAME_BY_HEADER_KEY,
-  buildId,
-  deriveBaseUsername,
-  normalizeHeader,
-  parseId,
-  randomIdNumber,
-  type Game,
-  type GameCode,
+    GAME_BY_CODE,
+    GAME_BY_HEADER_KEY,
+    buildId,
+    deriveBaseUsername,
+    normalizeHeader,
+    parseId,
+    randomIdNumber,
+    type Game,
+    type GameCode,
 } from "./games";
 
 /**
@@ -281,7 +281,10 @@ export function normalizeFbLink(raw: string): string {
     return s.replace(/\/+$/, "");
   }
 
-  let host = url.hostname.replace(/^(www|m|mbasic|web|touch|free|business)\./, "");
+  let host = url.hostname.replace(
+    /^(www|m|mbasic|web|touch|free|business)\./,
+    "",
+  );
   if (host === "fb.com" || host === "fb.me") host = "facebook.com";
 
   let path = url.pathname.replace(/\/+$/, "");
@@ -322,7 +325,8 @@ export function findPlayer(
   if (link) {
     for (let r = layout.dataStartRow; r < rows.length; r++) {
       const existing = normalizeFbLink(cell(rows, r, layout.fbLinkCol));
-      if (existing && existing === link) return { rowIdx: r, matchedBy: "link" };
+      if (existing && existing === link)
+        return { rowIdx: r, matchedBy: "link" };
     }
   }
   if (name) {
@@ -402,7 +406,10 @@ export function planRegistration(
     rowIdx = match.rowIdx;
   } else {
     rowIdx = layout.dataStartRow;
-    while (rowIdx < rows.length && cell(rows, rowIdx, layout.fbNameCol) !== "") {
+    while (
+      rowIdx < rows.length &&
+      cell(rows, rowIdx, layout.fbNameCol) !== ""
+    ) {
       rowIdx++;
     }
   }
@@ -427,7 +434,8 @@ export function planRegistration(
   const newLink = payload.facebookLink.trim();
   if (
     !existingLink ||
-    (isShareLink(existingLink) && normalizeFbLink(existingLink) !== normalizeFbLink(newLink))
+    (isShareLink(existingLink) &&
+      normalizeFbLink(existingLink) !== normalizeFbLink(newLink))
   ) {
     out[layout.fbLinkCol] = newLink;
   }
@@ -495,11 +503,21 @@ export function planRegistration(
 
     const current = (out[col] ?? "").toString().trim();
     if (current) {
-      accounts.push({ platform: game.name, code, generatedID: current, status: "existing" });
+      accounts.push({
+        platform: game.name,
+        code,
+        generatedID: current,
+        status: "existing",
+      });
     } else {
       const id = buildId(base, num, game);
       out[col] = id;
-      accounts.push({ platform: game.name, code, generatedID: id, status: "created" });
+      accounts.push({
+        platform: game.name,
+        code,
+        generatedID: id,
+        status: "created",
+      });
     }
   }
 

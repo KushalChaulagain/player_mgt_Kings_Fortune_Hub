@@ -67,7 +67,7 @@ server-side, never in the browser):
   slash, tracking params and case are ignored), then by FB name. New games are
   added to the existing row using the **same number suffix** as their existing
   IDs (`kerry605_os` → `kerry605_mw`). IDs already in the row are returned
-  as-is and marked *existing*; nothing already in the sheet is overwritten.
+  as-is and marked _existing_; nothing already in the sheet is overwritten.
 - The existing name/link/referral in the sheet win over what's typed, so a
   sloppy re-entry can't clobber the record. A throwaway `facebook.com/share/…`
   link is upgraded to a real profile link if one is entered later.

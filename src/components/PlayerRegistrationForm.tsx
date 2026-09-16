@@ -1,7 +1,12 @@
 "use client";
 
+import {
+    GAMES,
+    GAME_BY_CODE,
+    deriveBaseUsername,
+    type GameCode,
+} from "@/lib/games";
 import { useEffect, useRef, useState } from "react";
-import { GAMES, GAME_BY_CODE, deriveBaseUsername, type GameCode } from "@/lib/games";
 
 interface ResultAccount {
   platform: string;
@@ -112,6 +117,10 @@ export function PlayerRegistrationForm() {
   const existingPlayer =
     lookup.state === "found" && !forceNew ? lookup.player : null;
   const ownedCodes = new Set(existingPlayer?.accounts.map((a) => a.code) ?? []);
+  // Verified player: identity/referral come from the sheet, so hide those
+  // inputs. The link field stays visible only if the sheet row has no link.
+  const hideLinkField = !!existingPlayer?.facebookLink.trim();
+  const hideReferralField = !!existingPlayer;
 
   const toggleGame = (code: GameCode) => {
     const next = new Set(selectedGames);
@@ -166,8 +175,12 @@ export function PlayerRegistrationForm() {
 
     const payload: RegistrationPayload = {
       facebookName: facebookName.trim(),
-      facebookLink: facebookLink.trim(),
-      referralName: referralName.trim() || null,
+      // Verified player -> reuse the sheet's link/referral so a stale or
+      // hidden input can never overwrite the recorded identity.
+      facebookLink: hideLinkField
+        ? existingPlayer!.facebookLink.trim()
+        : facebookLink.trim(),
+      referralName: hideReferralField ? null : referralName.trim() || null,
       platforms: Array.from(selectedGames),
       forceNew,
     };
@@ -177,7 +190,7 @@ export function PlayerRegistrationForm() {
 
   const isFormValid =
     facebookName.trim() &&
-    facebookLink.trim() &&
+    (hideLinkField || facebookLink.trim()) &&
     deriveBaseUsername(facebookName).length > 0 &&
     selectedGames.size > 0 &&
     submit.state !== "saving";
@@ -216,25 +229,33 @@ export function PlayerRegistrationForm() {
             />
           </div>
 
-          {/* Facebook Profile Link */}
-          <div>
-            <label
-              htmlFor="facebookLink"
-              className="block text-sm font-medium text-[#C5A059] mb-2"
-            >
-              Facebook Profile Link <span className="text-[#D4AF37]">*</span>
-            </label>
-            <input
-              id="facebookLink"
-              type="url"
-              value={facebookLink}
-              onChange={(e) => setFacebookLink(e.target.value)}
-              autoComplete="off"
-              className="w-full px-4 py-3 border border-[#3A3A3A] rounded-md bg-[#0B0B0B] text-[#E5E5E5] placeholder:text-[#666] focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all"
-              placeholder="https://facebook.com/username"
-              required
-            />
-          </div>
+          {/* Facebook Profile Link — hidden once a verified player is found */}
+          {!hideLinkField && (
+            <div>
+              <label
+                htmlFor="facebookLink"
+                className="block text-sm font-medium text-[#C5A059] mb-2"
+              >
+                Facebook Profile Link{" "}
+                <span className="text-[#D4AF37]">*</span>
+                {existingPlayer && (
+                  <span className="ml-2 text-[#888] text-xs">
+                    (not on file — add it)
+                  </span>
+                )}
+              </label>
+              <input
+                id="facebookLink"
+                type="url"
+                value={facebookLink}
+                onChange={(e) => setFacebookLink(e.target.value)}
+                autoComplete="off"
+                className="w-full px-4 py-3 border border-[#3A3A3A] rounded-md bg-[#0B0B0B] text-[#E5E5E5] placeholder:text-[#666] focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all"
+                placeholder="https://facebook.com/username"
+                required
+              />
+            </div>
+          )}
 
           {/* Existing-player panel */}
           <LookupPanel
@@ -245,29 +266,27 @@ export function PlayerRegistrationForm() {
             onCopy={copyToClipboard}
           />
 
-          {/* Referral Name */}
-          <div>
-            <label
-              htmlFor="referralName"
-              className="block text-sm font-medium text-[#C5A059] mb-2"
-            >
-              Referral Name{" "}
-              <span className="text-[#888] text-xs">(Optional)</span>
-            </label>
-            <input
-              id="referralName"
-              type="text"
-              value={referralName}
-              onChange={(e) => setReferralName(e.target.value)}
-              autoComplete="off"
-              className="w-full px-4 py-3 border border-[#3A3A3A] rounded-md bg-[#0B0B0B] text-[#E5E5E5] placeholder:text-[#666] focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all"
-              placeholder={
-                existingPlayer?.referredBy
-                  ? `Already recorded: ${existingPlayer.referredBy}`
-                  : "Who referred this player?"
-              }
-            />
-          </div>
+          {/* Referral Name — hidden once a verified player is found */}
+          {!hideReferralField && (
+            <div>
+              <label
+                htmlFor="referralName"
+                className="block text-sm font-medium text-[#C5A059] mb-2"
+              >
+                Referral Name{" "}
+                <span className="text-[#888] text-xs">(Optional)</span>
+              </label>
+              <input
+                id="referralName"
+                type="text"
+                value={referralName}
+                onChange={(e) => setReferralName(e.target.value)}
+                autoComplete="off"
+                className="w-full px-4 py-3 border border-[#3A3A3A] rounded-md bg-[#0B0B0B] text-[#E5E5E5] placeholder:text-[#666] focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all"
+                placeholder="Who referred this player?"
+              />
+            </div>
+          )}
 
           {/* Game Selection */}
           <div>
@@ -480,35 +499,32 @@ function LookupPanel({
           </p>
         </header>
 
-        <div className="flex items-center gap-2 min-w-0">
-          <h3 className="text-sm text-[#E5E5E5] font-medium truncate">
-            {player.facebookName}
-          </h3>
-          {player.facebookLink && (
-            <a
-              href={player.facebookLink}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="Open Facebook profile"
-              title="Open Facebook profile"
-              className="shrink-0 text-[#666] hover:text-[#D4AF37] transition-colors"
-            >
-              <svg
-                aria-hidden="true"
-                viewBox="0 0 16 16"
-                className="w-3.5 h-3.5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.5}
-                strokeLinecap="round"
-                strokeLinejoin="round"
+        <h3 className="text-sm text-[#E5E5E5] font-medium truncate">
+          {player.facebookName}
+        </h3>
+
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+          <dt className="text-[#666]">Profile</dt>
+          <dd className="min-w-0">
+            {player.facebookLink ? (
+              <a
+                href={player.facebookLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open Facebook profile"
+                className="block truncate text-[#9A9A9A] hover:text-[#D4AF37] underline underline-offset-2 decoration-[#3A3A3A] transition-colors"
               >
-                <path d="M6.5 3.5H3.75A1.25 1.25 0 0 0 2.5 4.75v7.5a1.25 1.25 0 0 0 1.25 1.25h7.5a1.25 1.25 0 0 0 1.25-1.25V9.5" />
-                <path d="M9.5 2.5h4v4M13.5 2.5 7.5 8.5" />
-              </svg>
-            </a>
-          )}
-        </div>
+                {player.facebookLink.replace(/^https?:\/\/(www\.)?/, "")}
+              </a>
+            ) : (
+              <span className="text-[#555]">Not on file</span>
+            )}
+          </dd>
+          <dt className="text-[#666]">Referral</dt>
+          <dd className="min-w-0 truncate text-[#9A9A9A]">
+            {player.referredBy || <span className="text-[#555]">None</span>}
+          </dd>
+        </dl>
 
         {player.accounts.length > 0 ? (
           <ul className="flex flex-wrap gap-1.5" aria-label="Active games">
@@ -590,12 +606,32 @@ function ResultModal({
               {submit.state === "saving" ? (
                 <span className="w-7 h-7 rounded-full border-[3px] border-[#0B0B0B] border-t-transparent animate-spin" />
               ) : submit.state === "error" ? (
-                <svg className="w-8 h-8 text-[#0B0B0B]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                <svg
+                  className="w-8 h-8 text-[#0B0B0B]"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2.5}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
                 </svg>
               ) : (
-                <svg className="w-8 h-8 text-[#0B0B0B]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                <svg
+                  className="w-8 h-8 text-[#0B0B0B]"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2.5}
+                    d="M5 13l4 4L19 7"
+                  />
                 </svg>
               )}
             </div>
@@ -627,7 +663,8 @@ function ResultModal({
                   className="bg-[#0B0B0B] border border-[#2A2A2A] rounded-lg p-4 animate-pulse"
                 >
                   <p className="text-xs text-[#888] mb-2">
-                    {GAME_BY_CODE.get(code)?.emoji} {GAME_BY_CODE.get(code)?.name}
+                    {GAME_BY_CODE.get(code)?.emoji}{" "}
+                    {GAME_BY_CODE.get(code)?.name}
                   </p>
                   <div className="h-5 w-40 rounded bg-[#2A2A2A]" />
                 </div>
@@ -638,7 +675,9 @@ function ResultModal({
           {saved && (
             <>
               <p className="text-sm font-medium text-[#C5A059] mb-4">
-                {saved.isExisting ? "IDs for this player:" : "Your Generated IDs:"}
+                {saved.isExisting
+                  ? "IDs for this player:"
+                  : "Your Generated IDs:"}
               </p>
               <div className="space-y-3">
                 {saved.accounts.map((account) => (
@@ -669,16 +708,33 @@ function ResultModal({
                       </div>
                       <button
                         type="button"
-                        onClick={() => onCopy(account.generatedID, account.code)}
+                        onClick={() =>
+                          onCopy(account.generatedID, account.code)
+                        }
                         className="shrink-0 p-3 rounded-lg border border-[#2A2A2A] hover:border-[#D4AF37] hover:bg-[#161616] transition-all group"
                         title="Copy ID"
                       >
                         {copiedId === account.code ? (
-                          <svg className="w-5 h-5 text-[#D4AF37]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          <svg
+                            className="w-5 h-5 text-[#D4AF37]"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M5 13l4 4L19 7"
+                            />
                           </svg>
                         ) : (
-                          <svg className="w-5 h-5 text-[#888] group-hover:text-[#D4AF37] transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <svg
+                            className="w-5 h-5 text-[#888] group-hover:text-[#D4AF37] transition-colors"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
                             <path
                               strokeLinecap="round"
                               strokeLinejoin="round"
@@ -705,7 +761,9 @@ function ResultModal({
                   }
                   className="mt-4 text-xs text-[#C5A059] hover:text-[#D4AF37] underline underline-offset-2"
                 >
-                  {copiedId === "all" ? "Copied all IDs" : "Copy all IDs as text"}
+                  {copiedId === "all"
+                    ? "Copied all IDs"
+                    : "Copy all IDs as text"}
                 </button>
               )}
             </>

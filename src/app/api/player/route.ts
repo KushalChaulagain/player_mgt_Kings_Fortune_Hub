@@ -1,5 +1,5 @@
-import { NextResponse } from "next/server";
 import { lookupPlayer } from "@/lib/sheets";
+import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,7 +20,10 @@ export async function GET(req: Request) {
   }
 
   try {
-    const player = await lookupPlayer({ facebookName: name, facebookLink: link });
+    const player = await lookupPlayer({
+      facebookName: name,
+      facebookLink: link,
+    });
     return NextResponse.json({ ok: true, found: !!player, player });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
