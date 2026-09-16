@@ -56,16 +56,32 @@ Google Sheets API (service account). One-time setup:
    - `GOOGLE_PRIVATE_KEY` — `private_key` from the JSON, in quotes, keep the `\n`
 7. Restart `npm run dev`.
 
-How rows are written:
+How rows are written (the sheet is the source of truth — IDs are generated
+server-side, never in the browser):
 
 - Columns are matched by **header text** (emojis/spaces ignored), so
   `Firekirin 🔥`, `Juwa 2.0`, `CashMachine`, `FB Name`, `Facebook Link`,
   `Referred By` all resolve automatically. Reordering columns is safe.
-- Data goes into the **first row whose `FB Name` cell is empty**, so your
-  pre-numbered rows are respected and cleared rows get reused.
+- **Returning players are updated in place, never duplicated.** The server
+  looks the player up by normalised Facebook link first (`www.`/`m.`, trailing
+  slash, tracking params and case are ignored), then by FB name. New games are
+  added to the existing row using the **same number suffix** as their existing
+  IDs (`kerry605_os` → `kerry605_mw`). IDs already in the row are returned
+  as-is and marked *existing*; nothing already in the sheet is overwritten.
+- The existing name/link/referral in the sheet win over what's typed, so a
+  sloppy re-entry can't clobber the record. A throwaway `facebook.com/share/…`
+  link is upgraded to a real profile link if one is entered later.
+- New players go into the **first row whose `FB Name` cell is empty**. The
+  number suffix is checked against every ID in the sheet so two "Kerry"s can
+  never end up with the same platform username.
+- As you type, the form calls `GET /api/player` and shows an **"Existing player
+  found"** panel with their current IDs (click to copy), marks games they
+  already have with ✓, and relabels the submit button. If the match was by name
+  only, a **"Different person"** checkbox forces a brand-new row.
 - `Referral Bonus` is left for manual entry.
-- The success modal shows IDs instantly and a "Saving to sheet" badge that
-  turns into "Saved · row N". If Google is unreachable there's a **Retry** button.
+- IDs are shown only after the sheet confirms the write. If Google is
+  unreachable the modal shows the error, keeps the form filled in, and offers
+  **Retry** — no unrecorded IDs are ever handed out.
 
 ## Platform Username Rules
 

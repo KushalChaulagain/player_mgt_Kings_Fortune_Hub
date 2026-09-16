@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
-import {
-  appendRegistration,
-  type RegistrationPayload,
-} from "@/lib/sheets";
+import { isGameCode, type GameCode } from "@/lib/games";
+import { registerPlayer, type RegistrationPayload } from "@/lib/sheets";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,33 +26,25 @@ function validate(body: unknown): RegistrationPayload | string {
     return "referralName must be a string";
   }
 
-  if (!Array.isArray(b.accounts) || b.accounts.length === 0) {
-    return "At least one account is required";
+  if (!Array.isArray(b.platforms) || b.platforms.length === 0) {
+    return "At least one platform is required";
+  }
+  const platforms: GameCode[] = [];
+  for (const p of b.platforms) {
+    if (!isGameCode(p)) return `Unknown platform code: ${String(p)}`;
+    if (!platforms.includes(p)) platforms.push(p);
   }
 
-  const accounts: RegistrationPayload["accounts"] = [];
-  for (const a of b.accounts) {
-    if (!a || typeof a !== "object") return "Invalid account entry";
-    const acc = a as Record<string, unknown>;
-    if (
-      !isNonEmptyString(acc.platform) ||
-      !isNonEmptyString(acc.code, 10) ||
-      !isNonEmptyString(acc.generatedID)
-    ) {
-      return "Each account needs platform, code and generatedID";
-    }
-    accounts.push({
-      platform: acc.platform,
-      code: acc.code,
-      generatedID: acc.generatedID,
-    });
+  if (b.forceNew !== undefined && typeof b.forceNew !== "boolean") {
+    return "forceNew must be a boolean";
   }
 
   return {
-    facebookName: b.facebookName,
-    facebookLink: b.facebookLink,
-    referralName: (b.referralName as string | null | undefined) ?? null,
-    accounts,
+    facebookName: b.facebookName.trim(),
+    facebookLink: b.facebookLink.trim(),
+    referralName: (b.referralName as string | null | undefined)?.trim() || null,
+    platforms,
+    forceNew: b.forceNew === true,
   };
 }
 
@@ -72,7 +62,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const result = await appendRegistration(parsed);
+    const result = await registerPlayer(parsed);
     return NextResponse.json({ ok: true, ...result });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
