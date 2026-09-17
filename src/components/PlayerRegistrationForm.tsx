@@ -69,6 +69,61 @@ interface RegistrationDraft {
   facebookLink: string;
   referralName: string;
   selectedGames: GameCode[];
+  uiMode: UIMode;
+  selectedPlayer: PlayerRecord | null;
+}
+
+function parseStoredPlayerRecord(value: unknown): PlayerRecord | null {
+  if (!value || typeof value !== "object") return null;
+  const p = value as Partial<PlayerRecord>;
+  if (
+    typeof p.row !== "number" ||
+    typeof p.facebookName !== "string" ||
+    typeof p.facebookLink !== "string" ||
+    typeof p.referredBy !== "string" ||
+    (p.referralBonus !== null &&
+      p.referralBonus !== undefined &&
+      typeof p.referralBonus !== "string") ||
+    (p.matchedBy !== "link" && p.matchedBy !== "name") ||
+    !Array.isArray(p.accounts)
+  ) {
+    return null;
+  }
+
+  const accounts = p.accounts.filter(
+    (
+      account,
+    ): account is { platform: string; code: GameCode; id: string } => {
+      if (!account || typeof account !== "object") return false;
+      const a = account as Partial<{
+        platform: string;
+        code: string;
+        id: string;
+      }>;
+      return (
+        typeof a.platform === "string" &&
+        typeof a.id === "string" &&
+        typeof a.code === "string" &&
+        GAME_BY_CODE.has(a.code as GameCode)
+      );
+    },
+  );
+
+  return {
+    row: p.row,
+    facebookName: p.facebookName,
+    facebookLink: p.facebookLink,
+    referredBy: p.referredBy,
+    referralBonus: p.referralBonus ?? null,
+    accounts,
+    matchedBy: p.matchedBy,
+  };
+}
+
+function parseStoredUIMode(value: unknown): UIMode | null {
+  return value === "search" || value === "existing" || value === "new"
+    ? value
+    : null;
 }
 
 function readRegistrationDraft(): RegistrationDraft | null {
@@ -78,6 +133,12 @@ function readRegistrationDraft(): RegistrationDraft | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<RegistrationDraft>;
     if (!parsed || typeof parsed !== "object") return null;
+
+    const selectedPlayer = parseStoredPlayerRecord(parsed.selectedPlayer);
+    const uiMode =
+      parseStoredUIMode(parsed.uiMode) ??
+      (selectedPlayer ? "existing" : "search");
+
     return {
       searchQuery:
         typeof parsed.searchQuery === "string" ? parsed.searchQuery : "",
@@ -91,6 +152,8 @@ function readRegistrationDraft(): RegistrationDraft | null {
               typeof code === "string" && GAME_BY_CODE.has(code as GameCode),
           )
         : [],
+      uiMode,
+      selectedPlayer,
     };
   } catch {
     return null;
@@ -98,6 +161,9 @@ function readRegistrationDraft(): RegistrationDraft | null {
 }
 
 function hasRegistrationDraftContent(draft: RegistrationDraft): boolean {
+  if (draft.uiMode === "existing" && draft.selectedPlayer) {
+    return true;
+  }
   return (
     draft.searchQuery.trim().length > 0 ||
     draft.facebookLink.trim().length > 0 ||
@@ -205,10 +271,22 @@ export function PlayerRegistrationForm() {
   const [uiMode, setUIMode] = useState<UIMode>(() => {
     if (typeof window === "undefined") return "search";
     const draft = readRegistrationDraft();
-    return draft && hasRegistrationDraftContent(draft) ? "new" : "search";
+    if (!draft) return "search";
+    if (draft.uiMode === "existing" && draft.selectedPlayer) return "existing";
+    if (draft.uiMode === "new" && hasRegistrationDraftContent(draft)) {
+      return "new";
+    }
+    return hasRegistrationDraftContent(draft) ? "new" : "search";
   });
   const [selectedPlayer, setSelectedPlayer] = useState<PlayerRecord | null>(
-    null,
+    () => {
+      if (typeof window === "undefined") return null;
+      const draft = readRegistrationDraft();
+      if (draft?.uiMode === "existing" && draft.selectedPlayer) {
+        return draft.selectedPlayer;
+      }
+      return null;
+    },
   );
   const [facebookLink, setFacebookLink] = useState(() => {
     if (typeof window === "undefined") return "";
@@ -272,14 +350,11 @@ export function PlayerRegistrationForm() {
   /** True when user explicitly picked "Create New" or restored an in-progress draft. */
   const newViaDropdownRef = useRef(
     typeof window !== "undefined" &&
-      hasRegistrationDraftContent(
-        readRegistrationDraft() ?? {
-          searchQuery: "",
-          facebookLink: "",
-          referralName: "",
-          selectedGames: [],
-        },
-      ),
+      (() => {
+        const draft = readRegistrationDraft();
+        if (!draft) return false;
+        return draft.uiMode === "new" && hasRegistrationDraftContent(draft);
+      })(),
   );
   const referrerNameSetRef = useRef(new Set<string>());
   const [referrerNameCache, setReferrerNameCache] = useState<string[]>([]);
@@ -310,8 +385,10 @@ export function PlayerRegistrationForm() {
       facebookLink,
       referralName,
       selectedGames: Array.from(selectedGames),
+      uiMode,
+      selectedPlayer,
     });
-  }, [searchQuery, facebookLink, referralName, selectedGames]);
+  }, [searchQuery, facebookLink, referralName, selectedGames, uiMode, selectedPlayer]);
 
   useEffect(() => {
     let cancelled = false;
@@ -586,7 +663,6 @@ export function PlayerRegistrationForm() {
       }
       const result = data as RegisterResult;
       setSubmit({ state: "saved", result });
-      clearRegistrationDraft();
 
       if (opts?.inline && uiMode === "existing" && selectedPlayer) {
         const created = result.accounts.find((a) => a.status === "created");
@@ -603,6 +679,7 @@ export function PlayerRegistrationForm() {
         }
         setSubmit({ state: "idle" });
       } else if (opts?.showModalOnSuccess !== false) {
+        clearRegistrationDraft();
         setShowModal(true);
         resetToSearch();
       }
