@@ -60,19 +60,65 @@ export interface RegisterResult {
   unmappedPlatforms: string[];
 }
 
+export type ReferralBonusStatus = "Pending" | "Paid";
+
+export const REFERRAL_BONUS_STATUSES: readonly ReferralBonusStatus[] = [
+  "Pending",
+  "Paid",
+];
+
+export const isReferralBonusStatus = (v: unknown): v is ReferralBonusStatus =>
+  typeof v === "string" &&
+  (REFERRAL_BONUS_STATUSES as readonly string[]).includes(v);
+
 export interface PlayerRecord {
   row: number;
   facebookName: string;
   facebookLink: string;
   referredBy: string;
+  /** `null` when the sheet has no "Referral Bonus" column. */
+  referralBonus: string | null;
   accounts: { platform: string; code: GameCode; id: string }[];
   matchedBy: MatchedBy;
+}
+
+export interface ReferralBonusUpdate {
+  /** 1-based sheet row from a previous lookup; verified against the name. */
+  row?: number;
+  facebookName?: string;
+  facebookLink?: string;
+  status: ReferralBonusStatus;
+}
+
+export interface ReferralBonusResult {
+  row: number;
+  facebookName: string;
+  /** Sheet cell value, e.g. `"Pending"` or `"Paid (2026-09-16)"`. */
+  referralBonus: string;
+}
+
+export interface AddGamePayload {
+  /** 1-based sheet row from a previous lookup; verified against the name. */
+  row: number;
+  facebookName: string;
+  facebookLink?: string;
+  gameCode: GameCode;
+}
+
+export interface AddGameResult {
+  row: number;
+  code: GameCode;
+  platform: string;
+  generatedID: string;
+  status: AccountStatus;
 }
 
 export interface SheetLayout {
   fbNameCol: number;
   fbLinkCol: number;
   referredByCol: number;
+  /** -1 when the sheet has no "Referral Bonus" header */
+  referralBonusCol: number;
   /** column index -> Game for every recognised platform header */
   platformCols: Map<number, Game>;
   /** GameCode -> column index */
@@ -178,6 +224,7 @@ const KNOWN_HEADER_KEYS = new Set([
   "referral",
   "referralname",
   "referralbonus",
+  "referalbonus",
   ...GAME_BY_HEADER_KEY.keys(),
 ]);
 
@@ -223,6 +270,8 @@ export function parseLayout(rows: Rows, tab = "sheet"): SheetLayout {
   const fbNameCol = pick("fbname", "facebookname");
   const fbLinkCol = pick("facebooklink", "fblink");
   const referredByCol = pick("referredby", "referralname", "referral");
+  // Live sheet currently labels Q "Referal Bonus" (one r). Accept both.
+  const referralBonusCol = pick("referralbonus", "referalbonus");
 
   if (fbNameCol === -1) {
     throw new Error(
@@ -244,7 +293,13 @@ export function parseLayout(rows: Rows, tab = "sheet"): SheetLayout {
   }
 
   const width =
-    Math.max(...columnMap.values(), fbNameCol, fbLinkCol, referredByCol) + 1;
+    Math.max(
+      ...columnMap.values(),
+      fbNameCol,
+      fbLinkCol,
+      referredByCol,
+      referralBonusCol,
+    ) + 1;
 
   // Column A is a running number if no header row labels it.
   const numberColumnA = ![...columnMap.values()].includes(0);
@@ -253,6 +308,7 @@ export function parseLayout(rows: Rows, tab = "sheet"): SheetLayout {
     fbNameCol,
     fbLinkCol,
     referredByCol,
+    referralBonusCol,
     platformCols,
     colByCode,
     dataStartRow: lastHeaderRow + 1,
@@ -339,6 +395,40 @@ export function findPlayer(
   return null;
 }
 
+/**
+ * Normalize a Referral Bonus cell for the client. Preserves dated paid values
+ * like `Paid (2026-09-16)`; legacy shorthand ("yes", "paid") maps to Pending/Paid.
+ */
+export function parseReferralBonus(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "Pending";
+  const s = trimmed.toLowerCase();
+  if (s === "pending") return "Pending";
+  if (s.startsWith("paid")) return trimmed;
+  if (
+    s === "yes" ||
+    s === "done" ||
+    s === "true" ||
+    s === "✓" ||
+    s === "✔"
+  ) {
+    return "Paid";
+  }
+  return "Pending";
+}
+
+/** Format the value written to the Referral Bonus column. */
+export function formatReferralBonusCellValue(
+  status: ReferralBonusStatus,
+): string {
+  if (status === "Pending") return "Pending";
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `Paid (${y}-${m}-${d})`;
+}
+
 export function toPlayerRecord(
   rows: Rows,
   layout: SheetLayout,
@@ -356,9 +446,42 @@ export function toPlayerRecord(
     facebookLink: cell(rows, r, layout.fbLinkCol),
     referredBy:
       layout.referredByCol === -1 ? "" : cell(rows, r, layout.referredByCol),
+    referralBonus:
+      layout.referralBonusCol === -1
+        ? null
+        : parseReferralBonus(cell(rows, r, layout.referralBonusCol)),
     accounts,
     matchedBy: match.matchedBy,
   };
+}
+
+/**
+ * Resolve which row a bonus update targets.
+ *
+ * Prefer the row the client already has from lookup, but only if the name
+ * in that row still matches — the sheet may have been sorted or had rows
+ * inserted since. Otherwise fall back to the normal link/name search.
+ */
+export function resolveBonusRow(
+  rows: Rows,
+  layout: SheetLayout,
+  update: Pick<ReferralBonusUpdate, "row" | "facebookName" | "facebookLink">,
+): number | null {
+  const name = normalizeName(update.facebookName ?? "");
+
+  if (update.row !== undefined) {
+    const rowIdx = update.row - 1;
+    if (rowIdx >= layout.dataStartRow && rowIdx < rows.length) {
+      const rowName = normalizeName(cell(rows, rowIdx, layout.fbNameCol));
+      if (rowName && (!name || rowName === name)) return rowIdx;
+    }
+  }
+
+  const match = findPlayer(rows, layout, {
+    facebookName: update.facebookName,
+    facebookLink: update.facebookLink,
+  });
+  return match?.rowIdx ?? null;
 }
 
 /** Every platform ID currently in the sheet (lower-cased), for uniqueness checks. */
@@ -371,6 +494,56 @@ export function collectAllIds(rows: Rows, layout: SheetLayout): Set<string> {
     }
   }
   return ids;
+}
+
+/**
+ * Derive the platform ID for one cell on a row.
+ *
+ * Reads every platform column on the row, reuses the number suffix from any
+ * existing parsed ID, and returns the target game's ID. If that column already
+ * holds a value, returns it as-is without re-allocating numbers.
+ */
+export function resolveIdForRow(
+  rows: Rows,
+  layout: SheetLayout,
+  rowIdx: number,
+  facebookName: string,
+  gameCode: GameCode,
+  rng: () => number = randomIdNumber,
+): string {
+  const game = GAME_BY_CODE.get(gameCode);
+  if (!game) throw new Error(`Unknown platform code: ${gameCode}`);
+
+  const col = layout.colByCode.get(gameCode);
+  if (col !== undefined) {
+    const existing = cell(rows, rowIdx, col);
+    if (existing) return existing;
+  }
+
+  const existingIds: string[] = [];
+  for (const c of layout.platformCols.keys()) {
+    const v = cell(rows, rowIdx, c);
+    if (v) existingIds.push(v);
+  }
+  const parsedExisting = existingIds.map(parseId).find((p) => p !== null);
+
+  let base = deriveBaseUsername(facebookName);
+  if (!base) base = "player";
+  let num: number;
+
+  if (parsedExisting) {
+    if (parsedExisting.base) base = parsedExisting.base;
+    num = parsedExisting.num;
+  } else {
+    const taken = collectAllIds(rows, layout);
+    num = rng();
+    for (let attempt = 0; attempt < 50; attempt++) {
+      if (!taken.has(buildId(base, num, game).toLowerCase())) break;
+      num = rng();
+    }
+  }
+
+  return buildId(base, num, game);
 }
 
 export interface WritePlan {
@@ -450,34 +623,26 @@ export function planRegistration(
     }
   }
 
-  // Existing IDs on this row -> reuse their base + number.
-  const existingIds: string[] = [];
-  for (const c of layout.platformCols.keys()) {
-    const v = (out[c] ?? "").toString().trim();
-    if (v) existingIds.push(v);
+  // New rows default to Pending; returning players keep whatever is already
+  // in the cell so a registration never clobbers a Paid mark.
+  if (layout.referralBonusCol !== -1 && !match) {
+    out[layout.referralBonusCol] = "Pending";
   }
-  const parsedExisting = existingIds.map(parseId).find((p) => p !== null);
 
-  let base = deriveBaseUsername(payload.facebookName);
-  if (!base) base = "player";
-  let num: number;
+  const syncWorkingRows = (): Rows =>
+    rows.map((r, i) => {
+      if (i !== rowIdx) return r;
+      const copy = [...(r ?? [])];
+      for (let c = 0; c < layout.width; c++) {
+        const v = out[c];
+        if (v !== null && v !== undefined && String(v).trim() !== "") {
+          copy[c] = String(v);
+        }
+      }
+      return copy;
+    });
 
-  if (parsedExisting) {
-    if (parsedExisting.base) base = parsedExisting.base;
-    num = parsedExisting.num;
-  } else {
-    // Fresh number: avoid colliding with any ID anywhere in the sheet.
-    const taken = collectAllIds(rows, layout);
-    const wanted = payload.platforms
-      .map((code) => GAME_BY_CODE.get(code))
-      .filter((g): g is Game => !!g);
-    num = rng();
-    for (let attempt = 0; attempt < 50; attempt++) {
-      const clash = wanted.some((g) => taken.has(buildId(base, num, g)));
-      if (!clash) break;
-      num = rng();
-    }
-  }
+  let workingRows = syncWorkingRows();
 
   const accounts: ResultAccount[] = [];
   const unmappedPlatforms: string[] = [];
@@ -490,18 +655,27 @@ export function planRegistration(
     if (!game) continue;
 
     const col = layout.colByCode.get(code);
+    const current = col !== undefined ? cell(workingRows, rowIdx, col) : "";
+    const id = resolveIdForRow(
+      workingRows,
+      layout,
+      rowIdx,
+      payload.facebookName,
+      code,
+      rng,
+    );
+
     if (col === undefined) {
       unmappedPlatforms.push(game.name);
       accounts.push({
         platform: game.name,
         code,
-        generatedID: buildId(base, num, game),
+        generatedID: id,
         status: "created",
       });
       continue;
     }
 
-    const current = (out[col] ?? "").toString().trim();
     if (current) {
       accounts.push({
         platform: game.name,
@@ -510,8 +684,8 @@ export function planRegistration(
         status: "existing",
       });
     } else {
-      const id = buildId(base, num, game);
       out[col] = id;
+      workingRows = syncWorkingRows();
       accounts.push({
         platform: game.name,
         code,
@@ -542,10 +716,18 @@ export function planRegistration(
 // registrations can't both resolve the same "next empty row".
 let writeQueue: Promise<unknown> = Promise.resolve();
 
+const WRITE_LOCK_TIMEOUT_MS = 30_000;
+
 function withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
   const run = writeQueue.then(fn, fn);
   writeQueue = run.catch(() => undefined);
-  return run;
+  const timeout = new Promise<never>((_, reject) => {
+    setTimeout(
+      () => reject(new Error("SHEET_WRITE_TIMEOUT")),
+      WRITE_LOCK_TIMEOUT_MS,
+    );
+  });
+  return Promise.race([run, timeout]);
 }
 
 async function registerPlayerUnlocked(
@@ -588,4 +770,187 @@ export async function lookupPlayer(query: {
   const layout = parseLayout(rows, tab);
   const match = findPlayer(rows, layout, query);
   return match ? toPlayerRecord(rows, layout, match) : null;
+}
+
+/**
+ * Autocomplete search: all players whose FB name contains the query
+ * (case/whitespace insensitive). Exact and prefix matches rank first.
+ */
+export function searchPlayersByName(
+  rows: Rows,
+  layout: SheetLayout,
+  query: string,
+  limit = 12,
+): PlayerRecord[] {
+  const q = normalizeName(query);
+  if (q.length < 2) return [];
+
+  const scored: { record: PlayerRecord; score: number }[] = [];
+
+  for (let r = layout.dataStartRow; r < rows.length; r++) {
+    const rawName = cell(rows, r, layout.fbNameCol);
+    const name = normalizeName(rawName);
+    if (!name || !name.includes(q)) continue;
+
+    let score = 10;
+    if (name === q) score = 100;
+    else if (name.startsWith(q)) score = 50;
+
+    scored.push({
+      record: toPlayerRecord(rows, layout, { rowIdx: r, matchedBy: "name" }),
+      score,
+    });
+  }
+
+  return scored
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        a.record.facebookName.localeCompare(b.record.facebookName),
+    )
+    .slice(0, limit)
+    .map((m) => m.record);
+}
+
+export async function searchPlayers(
+  query: string,
+  limit = 12,
+): Promise<PlayerRecord[]> {
+  const { tab } = getConfig();
+  const rows = await readRows();
+  const layout = parseLayout(rows, tab);
+  return searchPlayersByName(rows, layout, query, limit);
+}
+
+async function updateReferralBonusUnlocked(
+  update: ReferralBonusUpdate,
+): Promise<ReferralBonusResult> {
+  const { spreadsheetId, tab } = getConfig();
+  const rows = await readRows();
+  const layout = parseLayout(rows, tab);
+
+  if (layout.referralBonusCol === -1) {
+    throw new Error(
+      `Could not find a "Referral Bonus" header in tab "${tab}". Add the column and retry.`,
+    );
+  }
+
+  const rowIdx = resolveBonusRow(rows, layout, update);
+  if (rowIdx === null) {
+    throw new Error("Player not found in the sheet.");
+  }
+
+  const sheetRow = rowIdx + 1;
+  const cellValue = formatReferralBonusCellValue(update.status);
+  const cellRef = `${quoteTab(tab)}!${columnLetter(layout.referralBonusCol)}${sheetRow}`;
+  await sheetsFetch(
+    `/${spreadsheetId}/values/${encodeURIComponent(cellRef)}?valueInputOption=USER_ENTERED`,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        range: cellRef,
+        majorDimension: "ROWS",
+        values: [[cellValue]],
+      }),
+    },
+  );
+
+  return {
+    row: sheetRow,
+    facebookName: cell(rows, rowIdx, layout.fbNameCol),
+    referralBonus: cellValue,
+  };
+}
+
+/** Write Referral Bonus cell value (`Pending` or `Paid (YYYY-MM-DD)`). */
+export function updateReferralBonus(
+  update: ReferralBonusUpdate,
+): Promise<ReferralBonusResult> {
+  return withWriteLock(() => updateReferralBonusUnlocked(update));
+}
+
+function verifyPlayerRow(
+  rows: Rows,
+  layout: SheetLayout,
+  payload: Pick<AddGamePayload, "row" | "facebookName" | "facebookLink">,
+): number {
+  const rowIdx = payload.row - 1;
+  const expectedName = normalizeName(payload.facebookName);
+
+  if (rowIdx < layout.dataStartRow || rowIdx >= rows.length) {
+    throw new Error("Player row mismatch / shifted");
+  }
+
+  const rowName = normalizeName(cell(rows, rowIdx, layout.fbNameCol));
+  if (!rowName || rowName !== expectedName) {
+    throw new Error("Player row mismatch / shifted");
+  }
+
+  const link = normalizeFbLink(payload.facebookLink ?? "");
+  if (link) {
+    const rowLink = normalizeFbLink(cell(rows, rowIdx, layout.fbLinkCol));
+    if (rowLink && rowLink !== link) {
+      throw new Error("Player row mismatch / shifted");
+    }
+  }
+
+  return rowIdx;
+}
+
+async function addPlayerGameUnlocked(
+  payload: AddGamePayload,
+): Promise<AddGameResult> {
+  const { spreadsheetId, tab } = getConfig();
+  const rows = await readRows();
+  const layout = parseLayout(rows, tab);
+  const rowIdx = verifyPlayerRow(rows, layout, payload);
+
+  const game = GAME_BY_CODE.get(payload.gameCode);
+  if (!game) throw new Error(`Unknown platform code: ${payload.gameCode}`);
+
+  const col = layout.colByCode.get(payload.gameCode);
+  if (col === undefined) {
+    throw new Error(
+      `Platform "${game.name}" is not mapped to a sheet column in tab "${tab}".`,
+    );
+  }
+
+  const existing = cell(rows, rowIdx, col);
+  const id = resolveIdForRow(
+    rows,
+    layout,
+    rowIdx,
+    payload.facebookName,
+    payload.gameCode,
+  );
+  const status: AccountStatus = existing ? "existing" : "created";
+
+  if (!existing) {
+    const sheetRow = rowIdx + 1;
+    const cellRef = `${quoteTab(tab)}!${columnLetter(col)}${sheetRow}`;
+    await sheetsFetch(
+      `/${spreadsheetId}/values/${encodeURIComponent(cellRef)}?valueInputOption=USER_ENTERED`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          range: cellRef,
+          majorDimension: "ROWS",
+          values: [[id]],
+        }),
+      },
+    );
+  }
+
+  return {
+    row: rowIdx + 1,
+    code: payload.gameCode,
+    platform: game.name,
+    generatedID: id,
+    status,
+  };
+}
+
+/** Add one platform ID to an existing player row. */
+export function addPlayerGame(payload: AddGamePayload): Promise<AddGameResult> {
+  return withWriteLock(() => addPlayerGameUnlocked(payload));
 }
