@@ -822,6 +822,28 @@ export async function searchPlayers(
   return searchPlayersByName(rows, layout, query, limit);
 }
 
+/** Unique FB display names for lightweight client datalists (sorted). */
+export function listPlayerNames(rows: Rows, layout: SheetLayout): string[] {
+  const seen = new Set<string>();
+  const names: string[] = [];
+
+  for (let r = layout.dataStartRow; r < rows.length; r++) {
+    const name = cell(rows, r, layout.fbNameCol).trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    names.push(name);
+  }
+
+  return names.sort((a, b) => a.localeCompare(b));
+}
+
+export async function listAllPlayerNames(): Promise<string[]> {
+  const { tab } = getConfig();
+  const rows = await readRows();
+  const layout = parseLayout(rows, tab);
+  return listPlayerNames(rows, layout);
+}
+
 async function updateReferralBonusUnlocked(
   update: ReferralBonusUpdate,
 ): Promise<ReferralBonusResult> {

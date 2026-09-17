@@ -8,7 +8,7 @@ import {
 } from "@/lib/games";
 import { ArrowUpRight, X } from "@phosphor-icons/react";
 import { AnimatePresence, motion } from "motion/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 interface ResultAccount {
   platform: string;
@@ -97,16 +97,55 @@ export function PlayerRegistrationForm() {
     id: string;
   } | null>(null);
   const [inlineAddError, setInlineAddError] = useState<string | null>(null);
+  const [referralFocused, setReferralFocused] = useState(false);
 
   const searchAbort = useRef<AbortController | null>(null);
   const comboboxRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const referralWrapperRef = useRef<HTMLDivElement>(null);
   /** True when user explicitly picked "Create New" from the dropdown (matches exist). */
   const newViaDropdownRef = useRef(false);
+  const referrerNameSetRef = useRef(new Set<string>());
+  const [referrerNameCache, setReferrerNameCache] = useState<string[]>([]);
+
+  const mergeReferrerNames = useCallback((names: string[]) => {
+    let changed = false;
+    for (const raw of names) {
+      const name = raw.trim();
+      if (!name || referrerNameSetRef.current.has(name)) continue;
+      referrerNameSetRef.current.add(name);
+      changed = true;
+    }
+    if (!changed) return;
+    setReferrerNameCache(
+      Array.from(referrerNameSetRef.current).sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    );
+  }, []);
 
   useEffect(() => {
     setIsClient(true);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/players/names");
+        const data = await res.json().catch(() => ({}));
+        if (cancelled || !res.ok || !data.ok || !Array.isArray(data.names)) {
+          return;
+        }
+        mergeReferrerNames(data.names as string[]);
+      } catch {
+        // Referral suggestions are optional; search merges still populate cache.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mergeReferrerNames]);
 
   // Debounced autocomplete search (name only — not tied to link field).
   useEffect(() => {
@@ -148,6 +187,11 @@ export function PlayerRegistrationForm() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
+  useEffect(() => {
+    if (search.state !== "ready" || search.players.length === 0) return;
+    mergeReferrerNames(search.players.map((player) => player.facebookName));
+  }, [search, mergeReferrerNames]);
+
   // Auto-open new-player form when search finds no matches (skip extra confirmation click).
   useEffect(() => {
     const q = searchQuery.trim();
@@ -182,6 +226,9 @@ export function PlayerRegistrationForm() {
       if (!comboboxRef.current?.contains(e.target as Node)) {
         setDropdownOpen(false);
       }
+      if (!referralWrapperRef.current?.contains(e.target as Node)) {
+        setReferralFocused(false);
+      }
     };
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
@@ -202,6 +249,7 @@ export function PlayerRegistrationForm() {
       setInlineAddResult(null);
       setFacebookLink("");
       setReferralName("");
+      setReferralFocused(false);
       setSelectedGames(new Set());
       if (focusInput) {
         requestAnimationFrame(() => {
@@ -252,12 +300,44 @@ export function PlayerRegistrationForm() {
     setHighlightIndex(-1);
     setFacebookLink("");
     setReferralName("");
+    setReferralFocused(false);
     setSelectedGames(new Set());
   };
 
   const searchPlayers =
     search.state === "ready" ? search.players : [];
   const trimmedQuery = searchQuery.trim();
+  const referralNameQuery = referralName.trim();
+  const referralNameMatches = useMemo(() => {
+    const q = referralNameQuery.toLowerCase();
+    if (q.length === 0) return [];
+
+    return referrerNameCache
+      .filter((name) => {
+        const lower = name.trim().toLowerCase();
+        return lower !== q && lower.includes(q);
+      })
+      .sort((a, b) => {
+        const aLower = a.toLowerCase();
+        const bLower = b.toLowerCase();
+        const aStarts = aLower.startsWith(q) ? 0 : 1;
+        const bStarts = bLower.startsWith(q) ? 0 : 1;
+        if (aStarts !== bStarts) return aStarts - bStarts;
+        if (aLower.length !== bLower.length) return aLower.length - bLower.length;
+        return aLower.localeCompare(bLower);
+      })
+      .slice(0, 5);
+  }, [referrerNameCache, referralNameQuery]);
+
+  const showReferralSuggestions =
+    referralFocused &&
+    referralNameQuery.length > 0 &&
+    referralNameMatches.length > 0;
+
+  const selectReferralSuggestion = (name: string) => {
+    setReferralName(name);
+    setReferralFocused(false);
+  };
 
   const showCreateNew =
     trimmedQuery.length >= 2 &&
@@ -658,15 +738,59 @@ export function PlayerRegistrationForm() {
                     Referral Name{" "}
                     <span className="text-[#888] text-xs">(Optional)</span>
                   </label>
-                  <input
-                    id="referralName"
-                    type="text"
-                    value={referralName}
-                    onChange={(e) => setReferralName(e.target.value)}
-                    autoComplete="off"
-                    className="w-full px-4 py-3 border border-[#3A3A3A] rounded-md bg-[#0B0B0B] text-[#E5E5E5] placeholder:text-[#666] focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all"
-                    placeholder="Who referred this player?"
-                  />
+                  <div ref={referralWrapperRef} className="relative w-full">
+                    <input
+                      id="referralName"
+                      type="text"
+                      role="combobox"
+                      aria-expanded={showReferralSuggestions}
+                      aria-controls="referral-suggestions-list"
+                      aria-autocomplete="list"
+                      value={referralName}
+                      onChange={(e) => setReferralName(e.target.value)}
+                      onFocus={() => setReferralFocused(true)}
+                      onBlur={() => {
+                        window.setTimeout(() => setReferralFocused(false), 150);
+                      }}
+                      autoComplete="off"
+                      className="w-full appearance-none px-4 py-3 border border-[#3A3A3A] rounded-md bg-[#0B0B0B] text-[#E5E5E5] placeholder:text-[#666] focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all [&::-webkit-list-button]:hidden [&::-webkit-calendar-picker-indicator]:hidden"
+                      placeholder="Who referred this player?"
+                    />
+
+                    <AnimatePresence>
+                      {showReferralSuggestions && (
+                        <motion.div
+                          id="referral-suggestions-list"
+                          role="listbox"
+                          layout
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: "auto" }}
+                          exit={{ opacity: 0, height: 0 }}
+                          transition={{
+                            duration: 0.2,
+                            ease: [0.16, 1, 0.3, 1],
+                          }}
+                          className="absolute z-20 left-0 right-0 top-full mt-1.5 overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900 shadow-xl shadow-black/40"
+                        >
+                          <div className="flex gap-1.5 overflow-x-auto px-2 py-2 scrollbar-none sm:flex-col sm:overflow-x-visible sm:overflow-y-auto sm:max-h-48 sm:gap-0 sm:px-0 sm:py-1">
+                            {referralNameMatches.map((name) => (
+                              <button
+                                key={name}
+                                type="button"
+                                role="option"
+                                aria-selected={referralName === name}
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={() => selectReferralSuggestion(name)}
+                                className="shrink-0 rounded-full border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 transition-colors active:bg-amber-500/10 active:text-amber-400 sm:w-full sm:shrink sm:rounded-none sm:border-0 sm:border-b sm:border-neutral-800/60 sm:last:border-b-0 sm:text-left sm:active:bg-amber-500/10"
+                              >
+                                {name}
+                              </button>
+                            ))}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
                 </div>
 
                 <div>
