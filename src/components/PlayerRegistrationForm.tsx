@@ -3,7 +3,9 @@
 import {
   GAMES,
   GAME_BY_CODE,
+  buildId,
   deriveBaseUsername,
+  parseId,
   type GameCode,
 } from "@/lib/games";
 import { ArrowUpRight, X } from "@phosphor-icons/react";
@@ -60,6 +62,63 @@ type SubmitState =
   | { state: "error"; message: string; payload: RegistrationPayload };
 
 const SEARCH_DEBOUNCE_MS = 400;
+const REGISTRATION_DRAFT_KEY = "registration_draft";
+
+interface RegistrationDraft {
+  searchQuery: string;
+  facebookLink: string;
+  referralName: string;
+  selectedGames: GameCode[];
+}
+
+function readRegistrationDraft(): RegistrationDraft | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(REGISTRATION_DRAFT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<RegistrationDraft>;
+    if (!parsed || typeof parsed !== "object") return null;
+    return {
+      searchQuery:
+        typeof parsed.searchQuery === "string" ? parsed.searchQuery : "",
+      facebookLink:
+        typeof parsed.facebookLink === "string" ? parsed.facebookLink : "",
+      referralName:
+        typeof parsed.referralName === "string" ? parsed.referralName : "",
+      selectedGames: Array.isArray(parsed.selectedGames)
+        ? parsed.selectedGames.filter(
+            (code): code is GameCode =>
+              typeof code === "string" && GAME_BY_CODE.has(code as GameCode),
+          )
+        : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function hasRegistrationDraftContent(draft: RegistrationDraft): boolean {
+  return (
+    draft.searchQuery.trim().length > 0 ||
+    draft.facebookLink.trim().length > 0 ||
+    draft.referralName.trim().length > 0 ||
+    draft.selectedGames.length > 0
+  );
+}
+
+function clearRegistrationDraft(): void {
+  if (typeof window === "undefined") return;
+  sessionStorage.removeItem(REGISTRATION_DRAFT_KEY);
+}
+
+function persistRegistrationDraft(draft: RegistrationDraft): void {
+  if (typeof window === "undefined") return;
+  if (!hasRegistrationDraftContent(draft)) {
+    clearRegistrationDraft();
+    return;
+  }
+  sessionStorage.setItem(REGISTRATION_DRAFT_KEY, JSON.stringify(draft));
+}
 
 const panelVariants = {
   hidden: { opacity: 0, height: 0 },
@@ -75,15 +134,95 @@ const panelVariants = {
   },
 };
 
+type ToastMessage = { id: number; message: string };
+
+const TOAST_DURATION_MS = 3200;
+
+function predictOptimisticGameId(
+  player: PlayerRecord,
+  code: GameCode,
+): string {
+  const game = GAME_BY_CODE.get(code);
+  if (!game) return "";
+
+  for (const acc of player.accounts) {
+    const parsed = parseId(acc.id);
+    if (parsed) {
+      return buildId(parsed.base, parsed.num, game);
+    }
+  }
+
+  const base = deriveBaseUsername(player.facebookName) || "player";
+  return buildId(base, 100, game);
+}
+
+function ToastStack({
+  toasts,
+  onDismiss,
+}: {
+  toasts: ToastMessage[];
+  onDismiss: (id: number) => void;
+}) {
+  return (
+    <div
+      aria-live="polite"
+      className="fixed bottom-4 right-4 z-[60] flex max-w-sm flex-col gap-2 pointer-events-none"
+    >
+      <AnimatePresence>
+        {toasts.map((toast) => (
+          <motion.div
+            key={toast.id}
+            initial={{ opacity: 0, y: 10, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 6, scale: 0.98 }}
+            transition={{ duration: 0.18 }}
+            role="alert"
+            className="pointer-events-auto rounded-xl border border-red-500/35 bg-[#141414]/95 px-4 py-2.5 text-sm text-red-200 shadow-[0_8px_24px_rgba(0,0,0,0.45)] backdrop-blur-sm"
+          >
+            <div className="flex items-start gap-2">
+              <span className="min-w-0 flex-1 leading-snug">{toast.message}</span>
+              <button
+                type="button"
+                aria-label="Dismiss alert"
+                onClick={() => onDismiss(toast.id)}
+                className="shrink-0 rounded p-0.5 text-red-300/80 transition-colors hover:text-red-100"
+              >
+                <X size={14} weight="bold" />
+              </button>
+            </div>
+          </motion.div>
+        ))}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 export function PlayerRegistrationForm() {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [uiMode, setUIMode] = useState<UIMode>("search");
+  const [searchQuery, setSearchQuery] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return readRegistrationDraft()?.searchQuery ?? "";
+  });
+  const [uiMode, setUIMode] = useState<UIMode>(() => {
+    if (typeof window === "undefined") return "search";
+    const draft = readRegistrationDraft();
+    return draft && hasRegistrationDraftContent(draft) ? "new" : "search";
+  });
   const [selectedPlayer, setSelectedPlayer] = useState<PlayerRecord | null>(
     null,
   );
-  const [facebookLink, setFacebookLink] = useState("");
-  const [referralName, setReferralName] = useState("");
-  const [selectedGames, setSelectedGames] = useState<Set<GameCode>>(new Set());
+  const [facebookLink, setFacebookLink] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return readRegistrationDraft()?.facebookLink ?? "";
+  });
+  const [referralName, setReferralName] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return readRegistrationDraft()?.referralName ?? "";
+  });
+  const [selectedGames, setSelectedGames] = useState<Set<GameCode>>(() => {
+    if (typeof window === "undefined") return new Set();
+    const draft = readRegistrationDraft();
+    return new Set(draft?.selectedGames ?? []);
+  });
   const [isClient, setIsClient] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
@@ -91,20 +230,57 @@ export function PlayerRegistrationForm() {
   const [submit, setSubmit] = useState<SubmitState>({ state: "idle" });
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState(-1);
-  const [addingGame, setAddingGame] = useState<GameCode | null>(null);
-  const [inlineAddResult, setInlineAddResult] = useState<{
-    code: GameCode;
-    id: string;
-  } | null>(null);
-  const [inlineAddError, setInlineAddError] = useState<string | null>(null);
   const [referralFocused, setReferralFocused] = useState(false);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const searchAbort = useRef<AbortController | null>(null);
+  const toastTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(
+    new Map(),
+  );
+  const nextToastId = useRef(0);
   const comboboxRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const referralWrapperRef = useRef<HTMLDivElement>(null);
-  /** True when user explicitly picked "Create New" from the dropdown (matches exist). */
-  const newViaDropdownRef = useRef(false);
+
+  const dismissToast = useCallback((id: number) => {
+    const timer = toastTimers.current.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      toastTimers.current.delete(id);
+    }
+    setToasts((prev) => prev.filter((toast) => toast.id !== id));
+  }, []);
+
+  const showToast = useCallback(
+    (message: string) => {
+      const id = ++nextToastId.current;
+      setToasts((prev) => [...prev, { id, message }]);
+      const timer = setTimeout(() => dismissToast(id), TOAST_DURATION_MS);
+      toastTimers.current.set(id, timer);
+    },
+    [dismissToast],
+  );
+
+  useEffect(() => {
+    const timers = toastTimers.current;
+    return () => {
+      for (const timer of timers.values()) clearTimeout(timer);
+      timers.clear();
+    };
+  }, []);
+
+  /** True when user explicitly picked "Create New" or restored an in-progress draft. */
+  const newViaDropdownRef = useRef(
+    typeof window !== "undefined" &&
+      hasRegistrationDraftContent(
+        readRegistrationDraft() ?? {
+          searchQuery: "",
+          facebookLink: "",
+          referralName: "",
+          selectedGames: [],
+        },
+      ),
+  );
   const referrerNameSetRef = useRef(new Set<string>());
   const [referrerNameCache, setReferrerNameCache] = useState<string[]>([]);
 
@@ -127,6 +303,15 @@ export function PlayerRegistrationForm() {
   useEffect(() => {
     setIsClient(true);
   }, []);
+
+  useEffect(() => {
+    persistRegistrationDraft({
+      searchQuery,
+      facebookLink,
+      referralName,
+      selectedGames: Array.from(selectedGames),
+    });
+  }, [searchQuery, facebookLink, referralName, selectedGames]);
 
   useEffect(() => {
     let cancelled = false;
@@ -243,14 +428,13 @@ export function PlayerRegistrationForm() {
       if (clearQuery) setSearchQuery("");
       setSelectedPlayer(null);
       setSearch({ state: "idle" });
-      setInlineAddError(null);
       setDropdownOpen(false);
       setHighlightIndex(-1);
-      setInlineAddResult(null);
       setFacebookLink("");
       setReferralName("");
       setReferralFocused(false);
       setSelectedGames(new Set());
+      clearRegistrationDraft();
       if (focusInput) {
         requestAnimationFrame(() => {
           const el = inputRef.current;
@@ -289,7 +473,6 @@ export function PlayerRegistrationForm() {
     setDropdownOpen(false);
     setHighlightIndex(-1);
     setSelectedGames(new Set());
-    setInlineAddResult(null);
   };
 
   const selectNewPlayer = () => {
@@ -403,13 +586,20 @@ export function PlayerRegistrationForm() {
       }
       const result = data as RegisterResult;
       setSubmit({ state: "saved", result });
+      clearRegistrationDraft();
 
       if (opts?.inline && uiMode === "existing" && selectedPlayer) {
         const created = result.accounts.find((a) => a.status === "created");
         setSelectedPlayer(mergePlayerAccounts(selectedPlayer, result));
         if (created) {
-          setInlineAddResult({ code: created.code, id: created.generatedID });
-          setTimeout(() => setInlineAddResult(null), 4000);
+          const key = `card-${created.code}`;
+          try {
+            await navigator.clipboard.writeText(created.generatedID);
+            setCopiedId(key);
+            setTimeout(() => setCopiedId(null), 2000);
+          } catch (err) {
+            console.error("Failed to copy:", err);
+          }
         }
         setSubmit({ state: "idle" });
       } else if (opts?.showModalOnSuccess !== false) {
@@ -423,8 +613,6 @@ export function PlayerRegistrationForm() {
         payload,
       });
       if (!opts?.inline) setShowModal(true);
-    } finally {
-      setAddingGame(null);
     }
   };
 
@@ -442,20 +630,32 @@ export function PlayerRegistrationForm() {
   };
 
   const quickAddGame = async (code: GameCode) => {
-    if (!selectedPlayer || addingGame || submit.state === "saving") return;
+    if (!selectedPlayer || submit.state === "saving") return;
     const owned = new Set(selectedPlayer.accounts.map((a) => a.code));
     if (owned.has(code)) return;
 
-    setAddingGame(code);
-    setInlineAddError(null);
+    const game = GAME_BY_CODE.get(code);
+    const previousPlayer = selectedPlayer;
+
+    setSelectedPlayer((prev) => {
+      if (!prev) return prev;
+      const byCode = new Map(prev.accounts.map((a) => [a.code, a]));
+      byCode.set(code, {
+        platform: game?.name ?? code,
+        code,
+        id: predictOptimisticGameId(prev, code),
+      });
+      return { ...prev, accounts: Array.from(byCode.values()) };
+    });
+
     try {
       const res = await fetch("/api/players/add-game", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          row: selectedPlayer.row,
-          facebookName: selectedPlayer.facebookName,
-          facebookLink: selectedPlayer.facebookLink.trim(),
+          row: previousPlayer.row,
+          facebookName: previousPlayer.facebookName,
+          facebookLink: previousPlayer.facebookLink.trim(),
           gameCode: code,
         }),
       });
@@ -464,7 +664,6 @@ export function PlayerRegistrationForm() {
         throw new Error(data.error || `Request failed (${res.status})`);
       }
 
-      const game = GAME_BY_CODE.get(code);
       setSelectedPlayer((prev) => {
         if (!prev) return prev;
         const byCode = new Map(prev.accounts.map((a) => [a.code, a]));
@@ -476,15 +675,20 @@ export function PlayerRegistrationForm() {
         return { ...prev, accounts: Array.from(byCode.values()) };
       });
 
-      if (data.status === "created") {
-        setInlineAddResult({ code, id: data.generatedID });
-        setTimeout(() => setInlineAddResult(null), 4000);
+      if (data.status === "created" && data.generatedID) {
+        const key = `card-${code}`;
+        try {
+          await navigator.clipboard.writeText(data.generatedID);
+          setCopiedId(key);
+          setTimeout(() => setCopiedId(null), 2000);
+        } catch (err) {
+          console.error("Failed to copy:", err);
+        }
       }
     } catch (err) {
+      setSelectedPlayer(previousPlayer);
       const message = err instanceof Error ? err.message : "Network error";
-      setInlineAddError(mapInlineAddError(message));
-    } finally {
-      setAddingGame(null);
+      showToast(mapInlineAddError(message));
     }
   };
 
@@ -868,10 +1072,8 @@ export function PlayerRegistrationForm() {
                   copiedId={copiedId}
                   onCopy={copyToClipboard}
                   onBonusChange={handleBonusChange}
-                  addingGame={addingGame}
-                  inlineAddResult={inlineAddResult}
-                  inlineAddError={inlineAddError}
                   onQuickAdd={quickAddGame}
+                  onActionError={showToast}
                 />
               </motion.div>
             )}
@@ -893,6 +1095,8 @@ export function PlayerRegistrationForm() {
           }}
         />
       )}
+
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
     </>
   );
 }
@@ -966,19 +1170,15 @@ function VerifiedPlayerCard({
   copiedId,
   onCopy,
   onBonusChange,
-  addingGame,
-  inlineAddResult,
-  inlineAddError,
   onQuickAdd,
+  onActionError,
 }: {
   player: PlayerRecord;
   copiedId: string | null;
   onCopy: (text: string, key: string) => void;
   onBonusChange: (row: number, status: string) => void;
-  addingGame: GameCode | null;
-  inlineAddResult: { code: GameCode; id: string } | null;
-  inlineAddError: string | null;
   onQuickAdd: (code: GameCode) => void;
+  onActionError: (message: string) => void;
 }) {
   const ownedCodes = new Set(player.accounts.map((a) => a.code));
   const availableGames = GAMES.filter((g) => !ownedCodes.has(g.code));
@@ -1042,11 +1242,7 @@ function VerifiedPlayerCard({
               Game IDs
             </span>
             {availableGames.length > 0 && (
-              <AddGameMenu
-                games={availableGames}
-                addingGame={addingGame}
-                onSelect={onQuickAdd}
-              />
+              <AddGameMenu games={availableGames} onSelect={onQuickAdd} />
             )}
           </div>
 
@@ -1058,32 +1254,21 @@ function VerifiedPlayerCard({
               {player.accounts.map((a) => {
                 const key = `card-${a.code}`;
                 const game = GAME_BY_CODE.get(a.code);
-                const justAdded =
-                  inlineAddResult?.code === a.code ? inlineAddResult.id : null;
                 return (
                   <li key={a.code}>
                     <button
                       type="button"
                       onClick={() => onCopy(a.id, key)}
                       title={`${a.id} — click to copy`}
-                      className={`
-                        inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] leading-5 transition-colors
-                        ${
-                          justAdded
-                            ? "border-[#D4AF37]/60 bg-[#D4AF37]/10 text-[#D4AF37]"
-                            : "border-[#333333] bg-[#0D0D0D] text-[#A8A8A8] hover:border-[#444444] hover:text-[#D4D4D4] hover:bg-[#151515]"
-                        }
-                      `}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-[#333333] bg-[#0D0D0D] text-[11px] leading-5 text-[#A8A8A8] transition-colors hover:border-[#444444] hover:text-[#D4D4D4] hover:bg-[#151515]"
                     >
                       {game && (
                         <span aria-hidden="true">{game.emoji}</span>
                       )}
                       <span>{a.platform}</span>
-                      {copiedId === key ? (
+                      {copiedId === key && (
                         <span className="text-[#D4AF37]">Copied</span>
-                      ) : justAdded ? (
-                        <span className="font-mono text-[10px]">{justAdded}</span>
-                      ) : null}
+                      )}
                     </button>
                   </li>
                 );
@@ -1096,28 +1281,13 @@ function VerifiedPlayerCard({
             </p>
           )}
 
-          {inlineAddError && (
-            <p className="mt-2 text-[11px] text-red-400" role="alert">
-              {inlineAddError}
-            </p>
-          )}
-
-          <AnimatePresence>
-            {inlineAddResult && (
-              <motion.p
-                initial={{ opacity: 0, y: -4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                className="mt-2 text-[11px] text-emerald-400/90"
-              >
-                Saved — {GAME_BY_CODE.get(inlineAddResult.code)?.name} ID
-                created.
-              </motion.p>
-            )}
-          </AnimatePresence>
         </div>
 
-        <ReferralBonusToggle player={player} onChange={onBonusChange} />
+        <ReferralBonusToggle
+          player={player}
+          onChange={onBonusChange}
+          onError={onActionError}
+        />
       </article>
     </section>
   );
@@ -1125,11 +1295,9 @@ function VerifiedPlayerCard({
 
 function AddGameMenu({
   games,
-  addingGame,
   onSelect,
 }: {
   games: readonly (typeof GAMES)[number][];
-  addingGame: GameCode | null;
   onSelect: (code: GameCode) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -1148,21 +1316,13 @@ function AddGameMenu({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        disabled={!!addingGame}
-        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-[#D4AF37]/40 bg-[#D4AF37]/5 text-[11px] font-medium text-[#D4AF37] hover:bg-[#D4AF37]/10 transition-colors disabled:opacity-60"
+        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-[#D4AF37]/40 bg-[#D4AF37]/5 text-[11px] font-medium text-[#D4AF37] hover:bg-[#D4AF37]/10 transition-colors"
       >
-        {addingGame ? (
-          <>
-            <span className="w-3 h-3 rounded-full border-2 border-[#D4AF37] border-t-transparent animate-spin" />
-            Adding…
-          </>
-        ) : (
-          <>+ Add New Game ID</>
-        )}
+        + Add New Game ID
       </button>
 
       <AnimatePresence>
-        {open && !addingGame && (
+        {open && (
           <motion.ul
             initial={{ opacity: 0, y: -4, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -1250,14 +1410,15 @@ function formatReferralBonusPaidLabel(status: string): string | null {
 function ReferralBonusToggle({
   player,
   onChange,
+  onError,
 }: {
   player: PlayerRecord;
   onChange: (row: number, status: string) => void;
+  onError: (message: string) => void;
 }) {
-  const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inFlight = useRef(false);
   const status = player.referralBonus ?? "Pending";
   const paid = status.startsWith("Paid");
   const paidDateLabel = formatReferralBonusPaidLabel(status);
@@ -1269,11 +1430,10 @@ function ReferralBonusToggle({
   }, []);
 
   async function toggle() {
-    if (saving) return;
+    if (inFlight.current) return;
     const next: ReferralBonusToggleStatus = paid ? "Pending" : "Paid";
     const previous = status;
-    setSaving(true);
-    setError(null);
+    inFlight.current = true;
     setSavedFlash(false);
     onChange(player.row, next);
     try {
@@ -1299,14 +1459,16 @@ function ReferralBonusToggle({
       savedTimer.current = setTimeout(() => setSavedFlash(false), 2200);
     } catch (err) {
       onChange(player.row, previous);
-      setError(err instanceof Error ? err.message : "Couldn't update bonus");
+      onError(
+        err instanceof Error ? err.message : "Couldn't update referral bonus",
+      );
     } finally {
-      setSaving(false);
+      inFlight.current = false;
     }
   }
 
   return (
-    <div className="mt-4 pt-4 border-t border-[#222222]">
+    <div className="mt-3 pt-3 border-t border-[#222222]">
       <div className="flex items-center justify-between gap-3">
         <span className="text-xs font-medium uppercase tracking-wide text-neutral-500">
           Referral Bonus
@@ -1329,13 +1491,11 @@ function ReferralBonusToggle({
               type="button"
               role="switch"
               aria-checked={paid}
-              aria-busy={saving}
               aria-label={`Referral bonus ${paid ? "Paid" : "Pending"}. Click to mark ${paid ? "Pending" : "Paid"}`}
-              disabled={saving}
               onClick={() => void toggle()}
               className={`
                 inline-flex items-center gap-2 rounded-full border pl-2.5 pr-1 py-1
-                transition-all active:scale-[0.98] disabled:cursor-wait
+                transition-all active:scale-[0.98]
                 ${
                   paid
                     ? "border-[#D4AF37]/55 bg-[#D4AF37]/10"
@@ -1348,7 +1508,7 @@ function ReferralBonusToggle({
                   paid ? "text-[#D4AF37]" : "text-[#8A8A8A]"
                 }`}
               >
-                {saving ? "Saving" : paid ? "Paid" : "Pending"}
+                {paid ? "Paid" : "Pending"}
               </span>
               <span
                 aria-hidden="true"
@@ -1358,17 +1518,13 @@ function ReferralBonusToggle({
                   ${paid ? "bg-[#D4AF37]" : "bg-[#2A2A2A]"}
                 `}
               >
-                {saving ? (
-                  <span className="absolute inset-0 m-auto h-3 w-3 rounded-full border-2 border-[#0B0B0B]/50 border-t-transparent animate-spin" />
-                ) : (
-                  <span
-                    className={`
-                      inline-block h-4 w-4 rounded-full bg-[#F2F2F2] shadow-sm
-                      transition-transform duration-200
-                      ${paid ? "translate-x-4.5" : "translate-x-0.5"}
-                    `}
-                  />
-                )}
+                <span
+                  className={`
+                    inline-block h-4 w-4 rounded-full bg-[#F2F2F2] shadow-sm
+                    transition-transform duration-200
+                    ${paid ? "translate-x-4.5" : "translate-x-0.5"}
+                  `}
+                />
               </span>
             </button>
           </div>
@@ -1379,11 +1535,6 @@ function ReferralBonusToggle({
           )}
         </div>
       </div>
-      {error && (
-        <p className="mt-1.5 text-[11px] text-red-400" role="alert">
-          {error}
-        </p>
-      )}
     </div>
   );
 }

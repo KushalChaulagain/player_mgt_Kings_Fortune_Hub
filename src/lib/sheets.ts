@@ -133,6 +133,24 @@ export interface SheetLayout {
 
 type Rows = string[][];
 
+/** In-memory snapshot of sheet rows; cleared on every write. */
+let playersCache: Rows | null = null;
+let lastFetchTime = 0;
+
+const PLAYERS_CACHE_TTL_MS = 60_000;
+
+function clearPlayersCache(): void {
+  playersCache = null;
+  lastFetchTime = 0;
+}
+
+function isPlayersCacheFresh(): boolean {
+  return (
+    playersCache !== null &&
+    Date.now() - lastFetchTime < PLAYERS_CACHE_TTL_MS
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Auth / HTTP
 // ---------------------------------------------------------------------------
@@ -202,13 +220,29 @@ function columnLetter(index: number): string {
   return letters;
 }
 
-async function readRows(): Promise<Rows> {
+async function fetchRowsFromSheets(): Promise<Rows> {
   const { spreadsheetId, tab } = getConfig();
   const range = `${quoteTab(tab)}!A1:Z`;
   const data = await sheetsFetch<{ values?: string[][] }>(
     `/${spreadsheetId}/values/${encodeURIComponent(range)}?majorDimension=ROWS`,
   );
   return data.values ?? [];
+}
+
+/** Always hits the Sheets API and refreshes the in-memory cache. */
+async function readRows(): Promise<Rows> {
+  const rows = await fetchRowsFromSheets();
+  playersCache = rows;
+  lastFetchTime = Date.now();
+  return rows;
+}
+
+/** Returns cached rows when fresh (< 60 s); otherwise loads from Sheets. */
+async function readCachedRows(): Promise<Rows> {
+  if (isPlayersCacheFresh()) {
+    return playersCache!;
+  }
+  return readRows();
 }
 
 // ---------------------------------------------------------------------------
@@ -719,7 +753,15 @@ let writeQueue: Promise<unknown> = Promise.resolve();
 const WRITE_LOCK_TIMEOUT_MS = 30_000;
 
 function withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
-  const run = writeQueue.then(fn, fn);
+  const wrapped = async () => {
+    clearPlayersCache();
+    try {
+      return await fn();
+    } finally {
+      clearPlayersCache();
+    }
+  };
+  const run = writeQueue.then(wrapped, wrapped);
   writeQueue = run.catch(() => undefined);
   const timeout = new Promise<never>((_, reject) => {
     setTimeout(
@@ -766,7 +808,7 @@ export async function lookupPlayer(query: {
   facebookLink?: string;
 }): Promise<PlayerRecord | null> {
   const { tab } = getConfig();
-  const rows = await readRows();
+  const rows = await readCachedRows();
   const layout = parseLayout(rows, tab);
   const match = findPlayer(rows, layout, query);
   return match ? toPlayerRecord(rows, layout, match) : null;
@@ -817,7 +859,7 @@ export async function searchPlayers(
   limit = 12,
 ): Promise<PlayerRecord[]> {
   const { tab } = getConfig();
-  const rows = await readRows();
+  const rows = await readCachedRows();
   const layout = parseLayout(rows, tab);
   return searchPlayersByName(rows, layout, query, limit);
 }
@@ -839,7 +881,7 @@ export function listPlayerNames(rows: Rows, layout: SheetLayout): string[] {
 
 export async function listAllPlayerNames(): Promise<string[]> {
   const { tab } = getConfig();
-  const rows = await readRows();
+  const rows = await readCachedRows();
   const layout = parseLayout(rows, tab);
   return listPlayerNames(rows, layout);
 }
