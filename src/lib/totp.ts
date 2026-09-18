@@ -60,8 +60,33 @@ async function hmacSha1(key: Uint8Array, message: Uint8Array): Promise<Uint8Arra
   return new Uint8Array(sig);
 }
 
+const BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+/** RFC 4648 Base32 decode (A-Z, 2-7); whitespace and padding are ignored. */
+function decodeBase32(input: string): Uint8Array {
+  const cleaned = input.replace(/[\s=]/g, "").toUpperCase();
+  const output: number[] = [];
+  let buffer = 0;
+  let bits = 0;
+
+  for (const char of cleaned) {
+    const value = BASE32_ALPHABET.indexOf(char);
+    if (value === -1) {
+      throw new Error(`Invalid Base32 character: ${char}`);
+    }
+    buffer = (buffer << 5) | value;
+    bits += 5;
+    if (bits >= 8) {
+      output.push((buffer >> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+
+  return new Uint8Array(output);
+}
+
 async function generateTotpForCounter(secret: string, counter: number): Promise<string> {
-  const key = new TextEncoder().encode(secret);
+  const key = decodeBase32(secret);
   const hmac = await hmacSha1(key, counterToBytes(counter));
   const offset = hmac[hmac.length - 1] & 0x0f;
   const binary =
