@@ -153,7 +153,7 @@ function persistDeviceSignature(record: DeviceSignatureRecord) {
 
 export default function VerifyDevicePage() {
   const reduceMotion = useReducedMotion();
-  const [setupKey, setSetupKey] = useState("");
+  const [activationCode, setActivationCode] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<ChallengeResponse | null>(null);
@@ -167,14 +167,13 @@ export default function VerifyDevicePage() {
   const envBlocked = envIssue !== null;
 
   const finishBind = useCallback(
-    async (credential: PublicKeyCredential, challenge: ChallengeResponse, key: string) => {
+    async (credential: PublicKeyCredential, challenge: ChallengeResponse) => {
       setPhase("binding");
       const res = await fetch("/api/device/bind", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          setupKey: key,
           challengeToken: challenge.challengeToken,
           credential: serializeCredential(credential),
         }),
@@ -193,24 +192,24 @@ export default function VerifyDevicePage() {
   );
 
   const runHardwareCreate = useCallback(
-    async (challenge: ChallengeResponse, key: string) => {
+    async (challenge: ChallengeResponse) => {
       const credential = await navigator.credentials.create({
         publicKey: publicKeyFromOptions(challenge.publicKey),
       });
       if (!credential || credential.type !== "public-key") {
         throw new Error("Authenticator returned an empty credential.");
       }
-      await finishBind(credential as PublicKeyCredential, challenge, key);
+      await finishBind(credential as PublicKeyCredential, challenge);
     },
     [finishBind]
   );
 
-  async function requestChallenge(key: string): Promise<ChallengeResponse> {
+  async function requestChallenge(code: string): Promise<ChallengeResponse> {
     const res = await fetch("/api/device/challenge", {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ setupKey: key }),
+      body: JSON.stringify({ activationCode: code }),
     });
     const data = (await res.json().catch(() => ({}))) as ChallengeResponse;
     if (!res.ok || !data.challengeToken || !data.publicKey) {
@@ -225,18 +224,18 @@ export default function VerifyDevicePage() {
 
     if (envBlocked) return;
 
-    if (!setupKey.trim()) {
-      setError("Enter the master shop setup key.");
+    if (!/^\d{6}$/.test(activationCode)) {
+      setError("Enter the current 6-digit activation code.");
       setPhase("error");
       return;
     }
 
     try {
       setPhase("challenging");
-      const challenge = await requestChallenge(setupKey);
+      const challenge = await requestChallenge(activationCode);
       pendingRef.current = challenge;
       setPending(challenge);
-      await runHardwareCreate(challenge, setupKey);
+      await runHardwareCreate(challenge);
     } catch (err) {
       const message = describeWebAuthnError(err);
       const needsGesture =
@@ -252,13 +251,13 @@ export default function VerifyDevicePage() {
 
     const challenge = pendingRef.current ?? pending;
     if (!challenge) {
-      setError("Challenge expired. Submit the setup key again.");
+      setError("Challenge expired. Enter a fresh activation code.");
       setPhase("error");
       return;
     }
     setError(null);
     try {
-      await runHardwareCreate(challenge, setupKey);
+      await runHardwareCreate(challenge);
     } catch (err) {
       setError(describeWebAuthnError(err));
       setPhase("awaiting-gesture");
@@ -309,10 +308,10 @@ export default function VerifyDevicePage() {
 
             <div className="flex flex-col gap-2">
               <label
-                htmlFor="device-setup-key"
+                htmlFor="device-activation-code"
                 className="text-[13px] font-medium text-[#D4C7A8]"
               >
-                Master shop setup key
+                Activation code
               </label>
               <div className="relative">
                 <LockKey
@@ -321,30 +320,34 @@ export default function VerifyDevicePage() {
                   aria-hidden
                 />
                 <input
-                  id="device-setup-key"
-                  name="device-setup-key"
-                  type="password"
-                  inputMode="text"
-                  autoComplete="off"
+                  id="device-activation-code"
+                  name="device-activation-code"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
                   autoCapitalize="off"
                   autoCorrect="off"
                   spellCheck={false}
-                  value={setupKey}
+                  maxLength={6}
+                  pattern="\d{6}"
+                  value={activationCode}
                   onChange={(e) => {
-                    setSetupKey(e.target.value);
+                    const digits = e.target.value.replace(/\D/g, "").slice(0, 6);
+                    setActivationCode(digits);
                     if (phase === "error") {
                       setPhase("idle");
                       setError(null);
                     }
                   }}
                   disabled={controlsDisabled}
-                  placeholder="Enter setup key"
+                  placeholder="Enter 6-digit activation code"
                   aria-disabled={controlsDisabled}
-                  className="h-12 w-full rounded-md border border-[#2A2A2A] bg-[#141414] pl-10 pr-3 text-sm text-[#F3EFE4] outline-none placeholder:text-[#5C5852] focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="h-12 w-full rounded-md border border-[#2A2A2A] bg-[#141414] pl-10 pr-3 font-mono text-sm tracking-[0.2em] text-[#F3EFE4] outline-none placeholder:font-sans placeholder:tracking-normal placeholder:text-[#5C5852] focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] disabled:cursor-not-allowed disabled:opacity-60"
                 />
               </div>
               <p className="text-[12px] leading-relaxed text-[#6F6A62]">
-                Authorized devices get permanent access. Key changes will log all devices out.
+                Codes rotate every 30 seconds and can only be used once. Authorized devices keep
+                permanent access.
               </p>
             </div>
 
@@ -388,7 +391,7 @@ export default function VerifyDevicePage() {
                 ) : busy ? (
                   <>
                     <SpinnerGap weight="bold" className="h-5 w-5 animate-spin" />
-                    {phase === "binding" ? "Saving device token" : "Checking setup key"}
+                    {phase === "binding" ? "Saving device token" : "Verifying activation code"}
                   </>
                 ) : (
                   <>

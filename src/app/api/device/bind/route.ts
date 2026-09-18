@@ -12,7 +12,6 @@ import {
   randomBytes,
   readAuthenticatorFlags,
   rpIdFromRequest,
-  setupKeyMatches,
   signDeviceToken,
   verifyChallengeToken,
   type DeviceSignatureRecord,
@@ -24,7 +23,6 @@ export const runtime = "edge";
 export const dynamic = "force-dynamic";
 
 interface BindBody {
-  setupKey?: unknown;
   challengeToken?: unknown;
   credential?: {
     id?: unknown;
@@ -48,14 +46,6 @@ export async function POST(request: Request) {
     body = (await request.json()) as BindBody;
   } catch {
     return NextResponse.json({ error: "Expected JSON body." }, { status: 400 });
-  }
-
-  const setupKey = typeof body.setupKey === "string" ? body.setupKey : "";
-  if (!(await setupKeyMatches(setupKey))) {
-    return NextResponse.json(
-      { error: "Master setup key is incorrect." },
-      { status: 401 }
-    );
   }
 
   const challengeToken = asNonEmptyString(body.challengeToken);

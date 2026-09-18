@@ -5,16 +5,18 @@ import {
   originFromRequest,
   randomBytes,
   rpIdFromRequest,
-  setupKeyMatches,
   signChallengeToken,
   type ChallengePayload,
 } from "@/lib/device-auth";
+import { verifyAndConsumeTotp } from "@/lib/totp";
 import { NextResponse } from "next/server";
 
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
 
 interface ChallengeBody {
+  activationCode?: unknown;
+  /** @deprecated Use activationCode */
   setupKey?: unknown;
 }
 
@@ -26,13 +28,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Expected JSON body." }, { status: 400 });
   }
 
-  const setupKey = typeof body.setupKey === "string" ? body.setupKey : "";
-  const matched = await setupKeyMatches(setupKey);
-  if (!matched) {
-    return NextResponse.json(
-      { error: "Master setup key is incorrect." },
-      { status: 401 }
-    );
+  const activationCode =
+    typeof body.activationCode === "string"
+      ? body.activationCode
+      : typeof body.setupKey === "string"
+        ? body.setupKey
+        : "";
+  const totp = await verifyAndConsumeTotp(activationCode);
+  if (!totp.ok) {
+    const message =
+      totp.reason === "spent"
+        ? "This activation code was already used. Wait for the next 30-second code."
+        : totp.reason === "unconfigured"
+          ? "Device activation is not configured on the server."
+          : "Activation code is incorrect or expired.";
+    return NextResponse.json({ error: message }, { status: 401 });
   }
 
   const rpId = rpIdFromRequest(request);
@@ -47,6 +57,7 @@ export async function POST(request: Request) {
     rpId,
     origin,
     userId: bytesToBase64Url(userId),
+    totpCounter: totp.counter,
     exp: Date.now() + CHALLENGE_TTL_MS,
   };
 

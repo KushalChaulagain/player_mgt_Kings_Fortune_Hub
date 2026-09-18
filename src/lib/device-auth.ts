@@ -25,6 +25,7 @@ export interface ChallengePayload {
   rpId: string;
   origin: string;
   userId: string;
+  totpCounter: number;
   exp: number;
 }
 
@@ -113,30 +114,13 @@ export async function secretsMatch(left: string, right: string): Promise<boolean
 }
 
 function getSigningSecret(): string {
-  const dedicated = process.env.DEVICE_TOKEN_SECRET?.trim();
-  if (dedicated) return dedicated;
-  const fallback = process.env.DEVICE_SETUP_SECRET?.trim();
-  return fallback ?? "";
-}
-
-export function getSetupSecret(): string {
-  return process.env.DEVICE_SETUP_SECRET?.trim() ?? "";
-}
-
-export async function setupKeyMatches(input: string): Promise<boolean> {
-  const expected = getSetupSecret();
-  const provided = input.trim();
-  if (!expected || !provided) {
-    await sha256Bytes(new TextEncoder().encode("device-setup-unconfigured"));
-    return false;
-  }
-  return secretsMatch(provided, expected);
+  return process.env.DEVICE_TOKEN_SECRET?.trim() ?? "";
 }
 
 async function hmacKey(usage: KeyUsage[]): Promise<CryptoKey> {
   const secret = getSigningSecret();
   if (!secret) {
-    throw new Error("DEVICE_TOKEN_SECRET (or DEVICE_SETUP_SECRET) is not configured");
+    throw new Error("DEVICE_TOKEN_SECRET is not configured");
   }
   return crypto.subtle.importKey(
     "raw",
@@ -191,6 +175,7 @@ export async function verifyChallengeToken(token: string): Promise<ChallengePayl
     if (typeof json.challenge !== "string" || typeof json.rpId !== "string") return null;
     if (typeof json.origin !== "string" || typeof json.userId !== "string") return null;
     if (typeof json.exp !== "number" || Date.now() > json.exp) return null;
+    if (typeof json.totpCounter !== "number" || !Number.isFinite(json.totpCounter)) return null;
     return json;
   } catch {
     return null;
