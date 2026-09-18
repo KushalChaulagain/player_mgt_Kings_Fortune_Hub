@@ -1,0 +1,417 @@
+"use client";
+
+import { DeviceEnvWarningBanner } from "@/components/DeviceEnvWarningBanner";
+import { diagnoseDeviceEnv, type DeviceEnvIssue } from "@/lib/device-client-env";
+import {
+  CheckCircle,
+  Fingerprint,
+  LockKey,
+  ShieldWarning,
+  SpinnerGap,
+} from "@phosphor-icons/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import Image from "next/image";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import logo from "@/public/logo.png";
+
+const LOCAL_STORAGE_KEY = "kfh_device_signature";
+
+interface DeviceSignatureRecord {
+  deviceId: string;
+  credentialId: string;
+  boundAt: string;
+}
+
+type Phase =
+  | "idle"
+  | "challenging"
+  | "awaiting-gesture"
+  | "binding"
+  | "success"
+  | "error";
+
+interface PublicKeyOptions {
+  challenge: number[];
+  rp: { name: string; id: string };
+  user: { id: number[]; name: string; displayName: string };
+  pubKeyCredParams: { type: "public-key"; alg: number }[];
+  authenticatorSelection: {
+    authenticatorAttachment: AuthenticatorAttachment;
+    userVerification: UserVerificationRequirement;
+    residentKey: ResidentKeyRequirement;
+    requireResidentKey: boolean;
+  };
+  timeout: number;
+  attestation: AttestationConveyancePreference;
+}
+
+interface ChallengeResponse {
+  challengeToken: string;
+  publicKey: PublicKeyOptions;
+  error?: string;
+}
+
+interface BindResponse {
+  ok?: boolean;
+  deviceSignature?: DeviceSignatureRecord;
+  error?: string;
+}
+
+interface SerializedCredential {
+  id: string;
+  rawId: string;
+  type: string;
+  authenticatorAttachment: string | null;
+  response: {
+    clientDataJSON: string;
+    attestationObject: string;
+    authenticatorData?: string;
+  };
+}
+
+function bytesToBase64Url(bytes: Uint8Array): string {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function toUint8Array(values: number[]): Uint8Array {
+  return Uint8Array.from(values);
+}
+
+function serializeCredential(credential: PublicKeyCredential): SerializedCredential {
+  const response = credential.response as AuthenticatorAttestationResponse;
+  const payload: SerializedCredential = {
+    id: credential.id,
+    rawId: bytesToBase64Url(new Uint8Array(credential.rawId)),
+    type: credential.type,
+    authenticatorAttachment: credential.authenticatorAttachment ?? null,
+    response: {
+      clientDataJSON: bytesToBase64Url(new Uint8Array(response.clientDataJSON)),
+      attestationObject: bytesToBase64Url(new Uint8Array(response.attestationObject)),
+    },
+  };
+
+  if (typeof response.getAuthenticatorData === "function") {
+    payload.response.authenticatorData = bytesToBase64Url(
+      new Uint8Array(response.getAuthenticatorData())
+    );
+  }
+
+  return payload;
+}
+
+function publicKeyFromOptions(options: PublicKeyOptions): PublicKeyCredentialCreationOptions {
+  return {
+    challenge: toUint8Array(options.challenge) as BufferSource,
+    rp: options.rp,
+    user: {
+      id: toUint8Array(options.user.id) as BufferSource,
+      name: options.user.name,
+      displayName: options.user.displayName,
+    },
+    pubKeyCredParams: options.pubKeyCredParams.map((p) => ({
+      type: "public-key" as const,
+      alg: p.alg,
+    })),
+    authenticatorSelection: options.authenticatorSelection,
+    timeout: options.timeout,
+    attestation: options.attestation,
+  };
+}
+
+function describeWebAuthnError(error: unknown): string {
+  if (error instanceof DOMException) {
+    if (error.name === "NotAllowedError") {
+      return "Hardware check was cancelled or blocked. Tap below to retry Face ID, Touch ID, or PIN.";
+    }
+    if (error.name === "NotSupportedError") {
+      return "This browser cannot create a platform passkey.";
+    }
+    if (error.name === "InvalidStateError") {
+      return "This phone already has a passkey for this shop. Retry to bind it anyway.";
+    }
+    if (error.name === "SecurityError") {
+      return "WebAuthn is blocked on this origin. Serve the app over HTTPS (or localhost).";
+    }
+    if (error.name === "AbortError") {
+      return "Hardware check timed out. Retry from this phone.";
+    }
+    return error.message || error.name;
+  }
+  if (error instanceof Error) return error.message;
+  return "Hardware authorization failed.";
+}
+
+function persistDeviceSignature(record: DeviceSignatureRecord) {
+  const payload = {
+    ...record,
+    storedAt: new Date().toISOString(),
+  };
+  window.localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(payload));
+}
+
+export default function VerifyDevicePage() {
+  const reduceMotion = useReducedMotion();
+  const [setupKey, setSetupKey] = useState("");
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState<ChallengeResponse | null>(null);
+  const [envIssue, setEnvIssue] = useState<DeviceEnvIssue | null>(null);
+  const pendingRef = useRef<ChallengeResponse | null>(null);
+
+  useEffect(() => {
+    setEnvIssue(diagnoseDeviceEnv());
+  }, []);
+
+  const envBlocked = envIssue !== null;
+
+  const finishBind = useCallback(
+    async (credential: PublicKeyCredential, challenge: ChallengeResponse, key: string) => {
+      setPhase("binding");
+      const res = await fetch("/api/device/bind", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          setupKey: key,
+          challengeToken: challenge.challengeToken,
+          credential: serializeCredential(credential),
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as BindResponse;
+      if (!res.ok || !data.ok || !data.deviceSignature) {
+        throw new Error(data.error || "Could not issue a device token.");
+      }
+      persistDeviceSignature(data.deviceSignature);
+      setPhase("success");
+      window.setTimeout(() => {
+        window.location.replace("/");
+      }, 700);
+    },
+    []
+  );
+
+  const runHardwareCreate = useCallback(
+    async (challenge: ChallengeResponse, key: string) => {
+      const credential = await navigator.credentials.create({
+        publicKey: publicKeyFromOptions(challenge.publicKey),
+      });
+      if (!credential || credential.type !== "public-key") {
+        throw new Error("Authenticator returned an empty credential.");
+      }
+      await finishBind(credential as PublicKeyCredential, challenge, key);
+    },
+    [finishBind]
+  );
+
+  async function requestChallenge(key: string): Promise<ChallengeResponse> {
+    const res = await fetch("/api/device/challenge", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ setupKey: key }),
+    });
+    const data = (await res.json().catch(() => ({}))) as ChallengeResponse;
+    if (!res.ok || !data.challengeToken || !data.publicKey) {
+      throw new Error(data.error || "Could not start the hardware challenge.");
+    }
+    return data;
+  }
+
+  async function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+
+    if (envBlocked) return;
+
+    if (!setupKey.trim()) {
+      setError("Enter the master shop setup key.");
+      setPhase("error");
+      return;
+    }
+
+    try {
+      setPhase("challenging");
+      const challenge = await requestChallenge(setupKey);
+      pendingRef.current = challenge;
+      setPending(challenge);
+      await runHardwareCreate(challenge, setupKey);
+    } catch (err) {
+      const message = describeWebAuthnError(err);
+      const needsGesture =
+        err instanceof DOMException &&
+        (err.name === "NotAllowedError" || err.name === "AbortError");
+      setError(message);
+      setPhase(needsGesture && pendingRef.current ? "awaiting-gesture" : "error");
+    }
+  }
+
+  async function onRetryHardware() {
+    if (envBlocked) return;
+
+    const challenge = pendingRef.current ?? pending;
+    if (!challenge) {
+      setError("Challenge expired. Submit the setup key again.");
+      setPhase("error");
+      return;
+    }
+    setError(null);
+    try {
+      await runHardwareCreate(challenge, setupKey);
+    } catch (err) {
+      setError(describeWebAuthnError(err));
+      setPhase("awaiting-gesture");
+    }
+  }
+
+  const busy = phase === "challenging" || phase === "binding";
+  const controlsDisabled = envBlocked || busy || phase === "success";
+  const transition = reduceMotion ? { duration: 0 } : { duration: 0.45, ease: [0.16, 1, 0.3, 1] };
+
+  return (
+    <main className="relative min-h-dvh bg-[#0B0B0B] text-[#E8E4DC]">
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-0"
+        style={{
+          background:
+            "radial-gradient(ellipse 80% 50% at 50% -10%, rgba(212,175,55,0.08), transparent 55%)",
+        }}
+      />
+
+      <div className="relative mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center px-6 py-12">
+        <motion.div
+          initial={reduceMotion ? false : { opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={transition}
+        >
+          <div className="mb-10 flex items-center gap-3">
+            <Image
+              src={logo}
+              alt="Kings Fortune Hub"
+              width={44}
+              height={44}
+              priority
+              className="h-11 w-11 object-contain"
+            />
+            <div>
+              <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#D4AF37]">
+                Kings Fortune Hub
+              </p>
+              <h1 className="font-sans text-xl font-semibold tracking-tight text-[#F3EFE4]">
+                Device binding
+              </h1>
+            </div>
+          </div>
+
+          <p className="mb-8 max-w-[40ch] text-[15px] leading-relaxed text-[#9A958C]">
+            This console only loads on authorized phone hardware. Enter the master shop setup
+            key, then confirm with Face ID, Touch ID, or the device PIN.
+          </p>
+
+          <form onSubmit={onSubmit} className="flex flex-col gap-5" autoComplete="off">
+            {envIssue ? <DeviceEnvWarningBanner issue={envIssue} /> : null}
+
+            <div className="flex flex-col gap-2">
+              <label
+                htmlFor="device-setup-key"
+                className="text-[13px] font-medium text-[#D4C7A8]"
+              >
+                Master shop setup key
+              </label>
+              <div className="relative">
+                <LockKey
+                  weight="bold"
+                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#6F6A62]"
+                  aria-hidden
+                />
+                <input
+                  id="device-setup-key"
+                  name="device-setup-key"
+                  type="password"
+                  inputMode="text"
+                  autoComplete="off"
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  value={setupKey}
+                  onChange={(e) => {
+                    setSetupKey(e.target.value);
+                    if (phase === "error") {
+                      setPhase("idle");
+                      setError(null);
+                    }
+                  }}
+                  disabled={controlsDisabled}
+                  placeholder="Shop setup secret"
+                  aria-disabled={controlsDisabled}
+                  className="h-12 w-full rounded-md border border-[#2A2A2A] bg-[#141414] pl-10 pr-3 font-mono text-sm text-[#F3EFE4] outline-none placeholder:text-[#5C5852] focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] disabled:cursor-not-allowed disabled:opacity-60"
+                />
+              </div>
+              <p className="text-[12px] leading-relaxed text-[#6F6A62]">
+                Stored only in server env as DEVICE_SETUP_SECRET. Never sent to other devices.
+              </p>
+            </div>
+
+            <AnimatePresence mode="wait">
+              {error ? (
+                <motion.div
+                  key={error}
+                  initial={reduceMotion ? false : { opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  className="flex gap-2 rounded-md border border-[#5A2A2A] bg-[#1A1010] px-3 py-2.5 text-[13px] leading-relaxed text-[#E8B4B0]"
+                  role="alert"
+                >
+                  <ShieldWarning weight="fill" className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{error}</span>
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
+
+            {phase === "awaiting-gesture" ? (
+              <button
+                type="button"
+                onClick={onRetryHardware}
+                disabled={envBlocked}
+                className="inline-flex h-12 items-center justify-center gap-2 rounded-md bg-[#D4AF37] px-4 text-sm font-semibold text-[#14110A] transition-transform duration-150 hover:bg-[#E0C056] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                <Fingerprint weight="bold" className="h-5 w-5" />
+                Unlock with this phone
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={controlsDisabled}
+                className="inline-flex h-12 items-center justify-center gap-2 rounded-md bg-[#D4AF37] px-4 text-sm font-semibold text-[#14110A] transition-transform duration-150 hover:bg-[#E0C056] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {phase === "success" ? (
+                  <>
+                    <CheckCircle weight="fill" className="h-5 w-5" />
+                    Device bound
+                  </>
+                ) : busy ? (
+                  <>
+                    <SpinnerGap weight="bold" className="h-5 w-5 animate-spin" />
+                    {phase === "binding" ? "Saving device token" : "Checking setup key"}
+                  </>
+                ) : (
+                  <>
+                    <Fingerprint weight="bold" className="h-5 w-5" />
+                    Authorize this phone
+                  </>
+                )}
+              </button>
+            )}
+          </form>
+
+          <p className="mt-8 font-mono text-[11px] leading-relaxed text-[#5C5852]">
+            After a successful handshake this phone receives a 10-year HTTP-only cookie and a
+            local device signature. The console will not ask again on this hardware.
+          </p>
+        </motion.div>
+      </div>
+    </main>
+  );
+}
