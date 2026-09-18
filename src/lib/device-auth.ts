@@ -402,6 +402,8 @@ export interface WebAuthnRegistrationOptions {
   /** Always present — Android Credential Manager mis-parses when this key is omitted. */
   excludeCredentials: [];
   authenticatorSelection: {
+    /** Forces the phone's native PIN/Fingerprint screen lock instead of USB security keys. */
+    authenticatorAttachment: "platform";
     userVerification: "required";
     residentKey: WebAuthnResidentKeyPolicy;
     /** Legacy FIDO2 flag kept alongside residentKey for Android API wrappers. */
@@ -415,6 +417,7 @@ function authenticatorSelectionForResidentKey(
   residentKey: WebAuthnResidentKeyPolicy
 ): WebAuthnRegistrationOptions["authenticatorSelection"] {
   return {
+    authenticatorAttachment: "platform",
     userVerification: "required",
     residentKey,
     // Legacy FIDO2 bit kept true for Android API wrappers even when residentKey is "preferred".
