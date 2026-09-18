@@ -385,3 +385,86 @@ export function originsMatch(left: string, right: string): boolean {
     return left.replace(/\/$/, "") === right.replace(/\/$/, "");
   }
 }
+
+export type WebAuthnResidentKeyPolicy = "required" | "preferred";
+
+/** Wire-format publicKey options for navigator.credentials.create (Edge-safe builder). */
+export interface WebAuthnRegistrationOptions {
+  challenge: number[];
+  rp: { name: string; id: string };
+  user: { id: number[]; name: string; displayName: string };
+  pubKeyCredParams: { type: "public-key"; alg: number }[];
+  /** Always present — Android Credential Manager mis-parses when this key is omitted. */
+  excludeCredentials: [];
+  authenticatorSelection: {
+    userVerification: "required";
+    residentKey: WebAuthnResidentKeyPolicy;
+    /** Legacy FIDO2 flag kept alongside residentKey for Android API wrappers. */
+    requireResidentKey: boolean;
+  };
+  timeout: number;
+  attestation: "none";
+}
+
+function authenticatorSelectionForResidentKey(
+  residentKey: WebAuthnResidentKeyPolicy
+): WebAuthnRegistrationOptions["authenticatorSelection"] {
+  return {
+    userVerification: "required",
+    residentKey,
+    // Legacy FIDO2 bit kept true for Android API wrappers even when residentKey is "preferred".
+    requireResidentKey: true,
+  };
+}
+
+/**
+ * Build WebAuthn registration options with an explicit layout Android Credential Manager expects.
+ * `excludeCredentials` is always `[]` so the OS does not default-evaluate stale credential indices.
+ */
+export function buildWebAuthnRegistrationOptions(input: {
+  rpId: string;
+  challenge: Uint8Array;
+  userId: Uint8Array;
+  residentKey?: WebAuthnResidentKeyPolicy;
+}): WebAuthnRegistrationOptions {
+  const residentKey = input.residentKey ?? "required";
+  return {
+    challenge: Array.from(input.challenge),
+    rp: {
+      name: RP_NAME,
+      id: input.rpId,
+    },
+    user: {
+      id: Array.from(input.userId),
+      name: "shop-admin-device",
+      displayName: "Shop Admin Device",
+    },
+    pubKeyCredParams: [
+      { type: "public-key", alg: -7 },
+      { type: "public-key", alg: -257 },
+    ],
+    excludeCredentials: [],
+    authenticatorSelection: authenticatorSelectionForResidentKey(residentKey),
+    timeout: 120_000,
+    attestation: "none",
+  };
+}
+
+/** Relaxed resident-key policy for Android when platform "required" triggers NotReadableError. */
+export function buildWebAuthnRegistrationFallbackOptions(input: {
+  rpId: string;
+  challenge: Uint8Array;
+  userId: Uint8Array;
+}): WebAuthnRegistrationOptions {
+  return buildWebAuthnRegistrationOptions({ ...input, residentKey: "preferred" });
+}
+
+export function isAndroidCredentialManagerRetryError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const name = (error as { name?: string }).name;
+  return (
+    name === "NotReadableError" ||
+    name === "InvalidStateError" ||
+    name === "ConstraintError"
+  );
+}

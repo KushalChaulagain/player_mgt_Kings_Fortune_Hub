@@ -1,6 +1,7 @@
 import {
   CHALLENGE_TTL_MS,
-  RP_NAME,
+  buildWebAuthnRegistrationFallbackOptions,
+  buildWebAuthnRegistrationOptions,
   bytesToBase64Url,
   originFromRequest,
   randomBytes,
@@ -63,41 +64,26 @@ export async function POST(request: NextRequest) {
 
   const challengeToken = await signChallengeToken(payload);
 
-  const publicKey = {
-    challenge: Array.from(challenge),
-    rp: {
-      name: RP_NAME,
-      id: rpId,
-    },
-    user: {
-      id: Array.from(userId),
-      name: "shop-admin-device",
-      displayName: "Shop Admin Device",
-    },
-    pubKeyCredParams: [
-      { type: "public-key", alg: -7 },
-      { type: "public-key", alg: -257 },
-    ],
-    authenticatorSelection: {
-      authenticatorAttachment: "platform" as const,
-      userVerification: "required" as const,
-      residentKey: "required" as const,
-      requireResidentKey: true,
-    },
-    timeout: 120000,
-    attestation: "none" as const,
-  };
+  const publicKey = buildWebAuthnRegistrationOptions({ rpId, challenge, userId });
+  const publicKeyFallback = buildWebAuthnRegistrationFallbackOptions({
+    rpId,
+    challenge,
+    userId,
+  });
 
   console.log("=== SERVER WEBAUTHN OPTIONS ===", {
     origin: request.headers.get("origin"),
     host: request.headers.get("host"),
     rpId: publicKey.rp.id,
+    excludeCredentials: publicKey.excludeCredentials,
     userVerification: publicKey.authenticatorSelection.userVerification,
     residentKey: publicKey.authenticatorSelection.residentKey,
+    requireResidentKey: publicKey.authenticatorSelection.requireResidentKey,
+    fallbackResidentKey: publicKeyFallback.authenticatorSelection.residentKey,
   });
 
   return NextResponse.json(
-    { challengeToken, publicKey },
+    { challengeToken, publicKey, publicKeyFallback },
     { headers: { "Cache-Control": "no-store" } }
   );
 }

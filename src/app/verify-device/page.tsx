@@ -3,6 +3,10 @@
 import { DeviceEnvWarningBanner } from "@/components/DeviceEnvWarningBanner";
 import { diagnoseDeviceEnv, type DeviceEnvIssue } from "@/lib/device-client-env";
 import {
+  isAndroidCredentialManagerRetryError,
+  type WebAuthnRegistrationOptions,
+} from "@/lib/device-auth";
+import {
   CheckCircle,
   Fingerprint,
   LockKey,
@@ -30,24 +34,10 @@ type Phase =
   | "success"
   | "error";
 
-interface PublicKeyOptions {
-  challenge: number[];
-  rp: { name: string; id: string };
-  user: { id: number[]; name: string; displayName: string };
-  pubKeyCredParams: { type: "public-key"; alg: number }[];
-  authenticatorSelection: {
-    authenticatorAttachment: AuthenticatorAttachment;
-    userVerification: UserVerificationRequirement;
-    residentKey: ResidentKeyRequirement;
-    requireResidentKey: boolean;
-  };
-  timeout: number;
-  attestation: AttestationConveyancePreference;
-}
-
 interface ChallengeResponse {
   challengeToken: string;
-  publicKey: PublicKeyOptions;
+  publicKey: WebAuthnRegistrationOptions;
+  publicKeyFallback?: WebAuthnRegistrationOptions;
   error?: string;
 }
 
@@ -101,7 +91,9 @@ function serializeCredential(credential: PublicKeyCredential): SerializedCredent
   return payload;
 }
 
-function publicKeyFromOptions(options: PublicKeyOptions): PublicKeyCredentialCreationOptions {
+function publicKeyFromOptions(
+  options: WebAuthnRegistrationOptions
+): PublicKeyCredentialCreationOptions {
   return {
     challenge: toUint8Array(options.challenge) as BufferSource,
     rp: options.rp,
@@ -114,10 +106,37 @@ function publicKeyFromOptions(options: PublicKeyOptions): PublicKeyCredentialCre
       type: "public-key" as const,
       alg: p.alg,
     })),
+    excludeCredentials: options.excludeCredentials,
     authenticatorSelection: options.authenticatorSelection,
     timeout: options.timeout,
     attestation: options.attestation,
   };
+}
+
+async function createPlatformCredential(
+  challenge: ChallengeResponse
+): Promise<PublicKeyCredential> {
+  try {
+    const credential = await navigator.credentials.create({
+      publicKey: publicKeyFromOptions(challenge.publicKey),
+    });
+    if (!credential || credential.type !== "public-key") {
+      throw new Error("Authenticator returned an empty credential.");
+    }
+    return credential as PublicKeyCredential;
+  } catch (primaryErr) {
+    if (!challenge.publicKeyFallback || !isAndroidCredentialManagerRetryError(primaryErr)) {
+      throw primaryErr;
+    }
+    console.warn("=== WEBAUTHN ANDROID FALLBACK (residentKey: preferred) ===", primaryErr);
+    const credential = await navigator.credentials.create({
+      publicKey: publicKeyFromOptions(challenge.publicKeyFallback),
+    });
+    if (!credential || credential.type !== "public-key") {
+      throw new Error("Authenticator returned an empty credential.");
+    }
+    return credential as PublicKeyCredential;
+  }
 }
 
 function describeWebAuthnError(error: unknown): string {
@@ -127,6 +146,9 @@ function describeWebAuthnError(error: unknown): string {
     }
     if (error.name === "NotSupportedError") {
       return "This browser cannot create a platform passkey.";
+    }
+    if (error.name === "NotReadableError") {
+      return "Android could not read the passkey slot. Retry — we will relax platform constraints automatically.";
     }
     if (error.name === "InvalidStateError") {
       return "This phone already has a passkey for this shop. Retry to bind it anyway.";
@@ -193,11 +215,9 @@ export default function VerifyDevicePage() {
 
   const runHardwareCreate = useCallback(
     async (challenge: ChallengeResponse) => {
-      let credential: Credential | null;
       try {
-        credential = await navigator.credentials.create({
-          publicKey: publicKeyFromOptions(challenge.publicKey),
-        });
+        const credential = await createPlatformCredential(challenge);
+        await finishBind(credential, challenge);
       } catch (err: unknown) {
         const webAuthnErr = err as { name?: string; message?: string; code?: number; stack?: string };
         console.error("=== WEBAUTHN HARDWARE ERROR DETAILED ===", {
@@ -211,10 +231,6 @@ export default function VerifyDevicePage() {
         );
         throw err;
       }
-      if (!credential || credential.type !== "public-key") {
-        throw new Error("Authenticator returned an empty credential.");
-      }
-      await finishBind(credential as PublicKeyCredential, challenge);
     },
     [finishBind, setError]
   );
