@@ -270,7 +270,7 @@ export default function VerifyDevicePage() {
   const transition = reduceMotion ? { duration: 0 } : { duration: 0.45, ease: [0.16, 1, 0.3, 1] };
 
   return (
-    <main className="relative min-h-dvh bg-[#0B0B0B] text-[#E8E4DC]">
+    <main className="relative flex min-h-dvh items-center justify-center bg-[#0B0B0B] px-5 py-10 text-[#E8E4DC] sm:px-6">
       <div
         aria-hidden
         className="pointer-events-none fixed inset-0"
@@ -280,36 +280,30 @@ export default function VerifyDevicePage() {
         }}
       />
 
-      <div className="relative mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center px-6 py-12">
-        <motion.div
-          initial={reduceMotion ? false : { opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={transition}
-        >
-          <div className="mb-10 flex items-center gap-3">
-            <Image
-              src={logo}
-              alt="Kings Fortune Hub"
-              width={44}
-              height={44}
-              priority
-              className="h-11 w-11 object-contain"
-            />
-            <div>
-              <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#D4AF37]">
-                Kings Fortune Hub
-              </p>
-              <h1 className="font-sans text-xl font-semibold tracking-tight text-[#F3EFE4]">
-                Device binding
-              </h1>
-            </div>
-          </div>
-
-          <p className="mb-8 max-w-[40ch] text-[15px] leading-relaxed text-[#9A958C]">
-            This console only loads on authorized phone hardware. Enter the master shop setup
-            key, then confirm with Face ID, Touch ID, or the device PIN.
+      <motion.div
+        initial={reduceMotion ? false : { opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={transition}
+        className="relative w-full max-w-sm"
+      >
+        <header className="mb-8 flex flex-col items-center text-center">
+          <Image
+            src={logo}
+            alt="Kings Fortune Hub"
+            width={48}
+            height={48}
+            priority
+            className="mb-4 h-12 w-12 object-contain"
+          />
+          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#D4AF37]">
+            Kings Fortune Hub
           </p>
+          <h1 className="mt-1 font-sans text-2xl font-semibold tracking-tight text-[#F3EFE4]">
+            Secure Terminal Activation
+          </h1>
+        </header>
 
+        <section className="rounded-xl border border-[#2A2A2A] bg-[#111111] p-6 sm:p-7">
           <form onSubmit={onSubmit} className="flex flex-col gap-5" autoComplete="off">
             {envIssue ? <DeviceEnvWarningBanner issue={envIssue} /> : null}
 
@@ -344,13 +338,13 @@ export default function VerifyDevicePage() {
                     }
                   }}
                   disabled={controlsDisabled}
-                  placeholder="Shop setup secret"
+                  placeholder="Enter setup key"
                   aria-disabled={controlsDisabled}
-                  className="h-12 w-full rounded-md border border-[#2A2A2A] bg-[#141414] pl-10 pr-3 font-mono text-sm text-[#F3EFE4] outline-none placeholder:text-[#5C5852] focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="h-12 w-full rounded-md border border-[#2A2A2A] bg-[#141414] pl-10 pr-3 text-sm text-[#F3EFE4] outline-none placeholder:text-[#5C5852] focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] disabled:cursor-not-allowed disabled:opacity-60"
                 />
               </div>
               <p className="text-[12px] leading-relaxed text-[#6F6A62]">
-                Stored only in server env as DEVICE_SETUP_SECRET. Never sent to other devices.
+                Authorized devices get permanent access. Key changes will log all devices out.
               </p>
             </div>
 
@@ -375,7 +369,7 @@ export default function VerifyDevicePage() {
                 type="button"
                 onClick={onRetryHardware}
                 disabled={envBlocked}
-                className="inline-flex h-12 items-center justify-center gap-2 rounded-md bg-[#D4AF37] px-4 text-sm font-semibold text-[#14110A] transition-transform duration-150 hover:bg-[#E0C056] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70"
+                className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-md bg-[#D4AF37] px-4 text-sm font-semibold text-[#14110A] transition-transform duration-150 hover:bg-[#E0C056] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70"
               >
                 <Fingerprint weight="bold" className="h-5 w-5" />
                 Unlock with this phone
@@ -384,7 +378,7 @@ export default function VerifyDevicePage() {
               <button
                 type="submit"
                 disabled={controlsDisabled}
-                className="inline-flex h-12 items-center justify-center gap-2 rounded-md bg-[#D4AF37] px-4 text-sm font-semibold text-[#14110A] transition-transform duration-150 hover:bg-[#E0C056] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70"
+                className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-md bg-[#D4AF37] px-4 text-sm font-semibold text-[#14110A] transition-transform duration-150 hover:bg-[#E0C056] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70"
               >
                 {phase === "success" ? (
                   <>
@@ -405,13 +399,8 @@ export default function VerifyDevicePage() {
               </button>
             )}
           </form>
-
-          <p className="mt-8 font-mono text-[11px] leading-relaxed text-[#5C5852]">
-            After a successful handshake this phone receives a 10-year HTTP-only cookie and a
-            local device signature. The console will not ask again on this hardware.
-          </p>
-        </motion.div>
-      </div>
+        </section>
+      </motion.div>
     </main>
   );
 }

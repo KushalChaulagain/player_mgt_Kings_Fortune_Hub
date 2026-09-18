@@ -55,9 +55,9 @@ export function diagnoseDeviceEnv(): DeviceEnvIssue | null {
   if (!isMobileHandset()) {
     return {
       code: "desktop-browser",
-      title: "Phone hardware required",
-      message:
-        "Device binding is locked to platform secure enclave chips on a physical handset. Open this page on the shop phone, not a desktop browser.",
+      title:
+        "⚠️ Mobile Device Required: Open this terminal link directly on an authorized work smartphone.",
+      message: "",
     };
   }
 
