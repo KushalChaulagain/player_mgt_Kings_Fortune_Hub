@@ -9,7 +9,7 @@ import {
   type ChallengePayload,
 } from "@/lib/device-auth";
 import { verifyAndConsumeTotp } from "@/lib/totp";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
@@ -20,7 +20,7 @@ interface ChallengeBody {
   setupKey?: unknown;
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   let body: ChallengeBody;
   try {
     body = (await request.json()) as ChallengeBody;

@@ -17,7 +17,7 @@ import {
   type DeviceSignatureRecord,
   type DeviceTokenPayload,
 } from "@/lib/device-auth";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
@@ -40,7 +40,7 @@ function asNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   let body: BindBody;
   try {
     body = (await request.json()) as BindBody;

@@ -218,22 +218,83 @@ export function hostWithoutPort(hostHeader: string): string {
   return trimmed.split(":")[0] ?? trimmed;
 }
 
-export function rpIdFromRequest(request: Request): string {
+/** Strip protocol, path, and port; return a bare hostname for WebAuthn rpId. */
+export function normalizeHostname(raw: string): string {
+  let value = raw.trim();
+  if (!value) return "localhost";
+  value = value.replace(/^https?:\/\//i, "");
+  const slash = value.indexOf("/");
+  if (slash >= 0) value = value.slice(0, slash);
+  return hostWithoutPort(value.toLowerCase()) || "localhost";
+}
+
+type RequestWithNextUrl = Request & {
+  nextUrl?: { hostname?: string; origin?: string };
+};
+
+function hostnameFromOriginHeader(request: Request): string | null {
+  const origin = request.headers.get("origin");
+  if (!origin) return null;
+  try {
+    return normalizeHostname(new URL(origin).hostname);
+  } catch {
+    return null;
+  }
+}
+
+function hostnameFromNextUrl(request: Request): string | null {
+  const nextUrl = (request as RequestWithNextUrl).nextUrl;
+  if (!nextUrl?.hostname) return null;
+  return normalizeHostname(nextUrl.hostname);
+}
+
+function rawHostFromHeaders(request: Request): string {
   const forwarded = request.headers.get("x-forwarded-host");
   const host = forwarded ?? request.headers.get("host") ?? "localhost";
-  return hostWithoutPort(host.split(",")[0] ?? host);
+  let value = (host.split(",")[0] ?? host).trim();
+  value = value.replace(/^https?:\/\//i, "");
+  const slash = value.indexOf("/");
+  if (slash >= 0) value = value.slice(0, slash);
+  return value.toLowerCase() || "localhost";
+}
+
+function hostnameFromHostHeaders(request: Request): string {
+  return hostWithoutPort(rawHostFromHeaders(request));
+}
+
+/** Effective hostname for rpId — aligned with the browser origin when possible. */
+export function hostnameFromRequest(request: Request): string {
+  return (
+    hostnameFromOriginHeader(request) ??
+    hostnameFromNextUrl(request) ??
+    hostnameFromHostHeaders(request)
+  );
+}
+
+export function rpIdFromRequest(request: Request): string {
+  return hostnameFromRequest(request);
 }
 
 export function originFromRequest(request: Request): string {
-  const origin = request.headers.get("origin");
-  if (origin) return origin.replace(/\/$/, "");
-  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? "localhost";
-  const hostPart = (host.split(",")[0] ?? host).trim();
+  const originHeader = request.headers.get("origin");
+  if (originHeader) {
+    try {
+      return new URL(originHeader).origin;
+    } catch {
+      return originHeader.replace(/\/$/, "");
+    }
+  }
+
+  const nextUrl = (request as RequestWithNextUrl).nextUrl;
+  if (nextUrl?.origin) return nextUrl.origin;
+
+  const authority = rawHostFromHeaders(request);
+  const hostname = hostWithoutPort(authority);
   const protoHeader = request.headers.get("x-forwarded-proto");
   const proto =
     protoHeader?.split(",")[0]?.trim() ??
-    (hostWithoutPort(hostPart) === "localhost" || hostPart.startsWith("127.") ? "http" : "https");
-  return `${proto}://${hostPart}`.replace(/\/$/, "");
+    (hostname === "localhost" || hostname.startsWith("127.") ? "http" : "https");
+  return `${proto}://${authority}`;
 }
 
 export interface ClientDataJSON {
