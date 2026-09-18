@@ -193,15 +193,30 @@ export default function VerifyDevicePage() {
 
   const runHardwareCreate = useCallback(
     async (challenge: ChallengeResponse) => {
-      const credential = await navigator.credentials.create({
-        publicKey: publicKeyFromOptions(challenge.publicKey),
-      });
+      let credential: Credential | null;
+      try {
+        credential = await navigator.credentials.create({
+          publicKey: publicKeyFromOptions(challenge.publicKey),
+        });
+      } catch (err: unknown) {
+        const webAuthnErr = err as { name?: string; message?: string; code?: number; stack?: string };
+        console.error("=== WEBAUTHN HARDWARE ERROR DETAILED ===", {
+          name: webAuthnErr.name,
+          message: webAuthnErr.message,
+          code: webAuthnErr.code,
+          stack: webAuthnErr.stack,
+        });
+        setError(
+          `WebAuthn Error [${webAuthnErr.name ?? "Unknown"}]: ${webAuthnErr.message ?? "No message"}. Code: ${webAuthnErr.code ?? "None"}`
+        );
+        throw err;
+      }
       if (!credential || credential.type !== "public-key") {
         throw new Error("Authenticator returned an empty credential.");
       }
       await finishBind(credential as PublicKeyCredential, challenge);
     },
-    [finishBind]
+    [finishBind, setError]
   );
 
   async function requestChallenge(code: string): Promise<ChallengeResponse> {
@@ -237,11 +252,12 @@ export default function VerifyDevicePage() {
       setPending(challenge);
       await runHardwareCreate(challenge);
     } catch (err) {
-      const message = describeWebAuthnError(err);
       const needsGesture =
         err instanceof DOMException &&
         (err.name === "NotAllowedError" || err.name === "AbortError");
-      setError(message);
+      if (!(err instanceof DOMException)) {
+        setError(describeWebAuthnError(err));
+      }
       setPhase(needsGesture && pendingRef.current ? "awaiting-gesture" : "error");
     }
   }
@@ -259,7 +275,9 @@ export default function VerifyDevicePage() {
     try {
       await runHardwareCreate(challenge);
     } catch (err) {
-      setError(describeWebAuthnError(err));
+      if (!(err instanceof DOMException)) {
+        setError(describeWebAuthnError(err));
+      }
       setPhase("awaiting-gesture");
     }
   }
