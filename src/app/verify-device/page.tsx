@@ -345,10 +345,6 @@ export default function VerifyDevicePage() {
                   className="h-12 w-full rounded-md border border-[#2A2A2A] bg-[#141414] pl-10 pr-3 font-mono text-sm tracking-[0.2em] text-[#F3EFE4] outline-none placeholder:font-sans placeholder:tracking-normal placeholder:text-[#5C5852] focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] disabled:cursor-not-allowed disabled:opacity-60"
                 />
               </div>
-              <p className="text-[12px] leading-relaxed text-[#6F6A62]">
-                Codes rotate every 30 seconds and can only be used once. Authorized devices keep
-                permanent access.
-              </p>
             </div>
 
             <AnimatePresence mode="wait">
