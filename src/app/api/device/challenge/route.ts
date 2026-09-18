@@ -5,6 +5,7 @@ import {
   bytesToBase64Url,
   originFromRequest,
   randomBytes,
+  randomWebAuthnUserId,
   rpIdFromRequest,
   signChallengeToken,
   type ChallengePayload,
@@ -49,7 +50,7 @@ export async function POST(request: NextRequest) {
   const rpId = rpIdFromRequest(request);
   const origin = originFromRequest(request);
   const challenge = randomBytes(32);
-  const userId = randomBytes(32);
+  const userId = randomWebAuthnUserId();
 
   const payload: ChallengePayload = {
     v: 1,
@@ -64,12 +65,8 @@ export async function POST(request: NextRequest) {
 
   const challengeToken = await signChallengeToken(payload);
 
-  const publicKey = buildWebAuthnRegistrationOptions({ rpId, challenge, userId });
-  const publicKeyFallback = buildWebAuthnRegistrationFallbackOptions({
-    rpId,
-    challenge,
-    userId,
-  });
+  const publicKey = buildWebAuthnRegistrationOptions({ rpId, challenge });
+  const publicKeyFallback = buildWebAuthnRegistrationFallbackOptions({ rpId, challenge });
 
   console.log("=== SERVER WEBAUTHN OPTIONS ===", {
     origin: request.headers.get("origin"),

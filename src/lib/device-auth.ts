@@ -84,6 +84,11 @@ export function randomBytes(length: number): Uint8Array {
   return bytes;
 }
 
+/** Fresh WebAuthn user handle — unique per options payload to avoid Android Credential Manager key collisions. */
+export function randomWebAuthnUserId(): Uint8Array {
+  return crypto.getRandomValues(new Uint8Array(16));
+}
+
 export function bytesToHex(bytes: Uint8Array): string {
   let hex = "";
   for (let i = 0; i < bytes.length; i++) {
@@ -424,10 +429,10 @@ function authenticatorSelectionForResidentKey(
 export function buildWebAuthnRegistrationOptions(input: {
   rpId: string;
   challenge: Uint8Array;
-  userId: Uint8Array;
   residentKey?: WebAuthnResidentKeyPolicy;
 }): WebAuthnRegistrationOptions {
   const residentKey = input.residentKey ?? "required";
+  const randomUserId = randomWebAuthnUserId();
   return {
     challenge: Array.from(input.challenge),
     rp: {
@@ -435,7 +440,7 @@ export function buildWebAuthnRegistrationOptions(input: {
       id: input.rpId,
     },
     user: {
-      id: Array.from(input.userId),
+      id: Array.from(randomUserId),
       name: "shop-admin-device",
       displayName: "Shop Admin Device",
     },
@@ -454,7 +459,6 @@ export function buildWebAuthnRegistrationOptions(input: {
 export function buildWebAuthnRegistrationFallbackOptions(input: {
   rpId: string;
   challenge: Uint8Array;
-  userId: Uint8Array;
 }): WebAuthnRegistrationOptions {
   return buildWebAuthnRegistrationOptions({ ...input, residentKey: "preferred" });
 }
