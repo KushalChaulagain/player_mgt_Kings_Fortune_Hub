@@ -58,13 +58,35 @@ export const GAME_BY_HEADER_KEY: ReadonlyMap<string, Game> = new Map(
   GAMES.map((g) => [normalizeHeader(g.name), g]),
 );
 
-/** "Kerry Romero" -> "kerry" */
-export const deriveBaseUsername = (name: string): string =>
-  name
-    .trim()
-    .split(/\s+/)[0]
+/** Platform IDs: letters, digits, underscore only; max 13 characters. */
+export const MAX_GAME_ID_LENGTH = 13;
+export const GAME_ID_PATTERN = /^[a-z0-9_]{1,13}$/;
+
+/** Fixed tail length: 3-digit number + optional `_` + platform suffix. */
+export function idFixedPartLength(game: Game): number {
+  return 3 + (game.needsUnderscore ? 1 : 0) + game.suffix.length;
+}
+
+/** Longest base prefix allowed for this platform (e.g. Juwa 2.0 `_jw2` → 6). */
+export function maxBaseLengthForGame(game: Game): number {
+  return MAX_GAME_ID_LENGTH - idFixedPartLength(game);
+}
+
+/** Smallest per-game base cap so one prefix works on all 12 platforms. */
+export const MAX_PLAYER_BASE_LENGTH = Math.min(
+  ...GAMES.map((g) => maxBaseLengthForGame(g)),
+);
+
+export function truncatePlayerBase(base: string): string {
+  return base
     .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
+    .replace(/[^a-z0-9]/g, "")
+    .slice(0, MAX_PLAYER_BASE_LENGTH);
+}
+
+/** "Kerry Romero" -> "kerry" (truncated to fit every platform ID). */
+export const deriveBaseUsername = (name: string): string =>
+  truncatePlayerBase(name.trim().split(/\s+/)[0]);
 
 export const MIN_ID_NUMBER = 100;
 export const MAX_ID_NUMBER = 999;
@@ -76,10 +98,19 @@ export function randomIdNumber(): number {
   );
 }
 
-/** ("kerry", 605, OrionStars) -> "kerry605_os"; ("kerry", 605, Gameroom) -> "kerry605gr" */
+/** ("kerry", 605, Orion Stars) -> "kerry605_os"; ("kerry", 605, Gameroom) -> "kerry605gr" */
 export function buildId(base: string, num: number, game: Game): string {
+  const b = truncatePlayerBase(base).slice(0, maxBaseLengthForGame(game));
   const connector = game.needsUnderscore ? "_" : "";
-  return `${base}${num}${connector}${game.suffix}`;
+  const id = `${b}${num}${connector}${game.suffix}`;
+  if (id.length > MAX_GAME_ID_LENGTH || !GAME_ID_PATTERN.test(id)) {
+    throw new Error(`Invalid platform ID: ${id}`);
+  }
+  return id;
+}
+
+export function isValidGameId(id: string): boolean {
+  return GAME_ID_PATTERN.test(id.trim().toLowerCase());
 }
 
 export interface ParsedId {

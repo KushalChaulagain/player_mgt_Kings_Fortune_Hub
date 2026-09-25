@@ -85,8 +85,27 @@ server-side, never in the browser):
 
 ## Platform Username Rules
 
-- **With underscore**: FK, JW, GV, OS, MW, JW2 (e.g., `mathew43_fk`)
-- **Without underscore**: GR, CM, UP, YO, EG, PM (e.g., `mathew43gr`)
+Every ID is **≤ 13 characters**, **lowercase letters, digits, and `_` only**.
+
+| # | Platform | Example (base `kerry`, num `605`) |
+|---|----------|-----------------------------------|
+| 1 | Firekirin | `kerry605_fk` |
+| 2 | Juwa | `kerry605_jw` |
+| 3 | Gamevault | `kerry605_gv` |
+| 4 | Orion Stars | `kerry605_os` |
+| 5 | Milkyway | `kerry605_mw` |
+| 6 | Juwa 2.0 | `kerry605_jw2` |
+| 7 | Gameroom | `kerry605gr` |
+| 8 | Cash Machine | `kerry605cm` |
+| 9 | Ultra Panda | `kerry605up` |
+| 10 | YOLO | `kerry605yo` |
+| 11 | Egame | `kerry605eg` |
+| 12 | PandaMasters | `kerry605pm` |
+
+- First name → base prefix, **max 6 letters/digits** (Juwa 2.0 is the tightest fit).
+- Number suffix: `100`–`999`, shared across all platforms on a row.
+- **With underscore** before suffix: FK, JW, GV, OS, MW, JW2.
+- **No underscore**: GR, CM, UP, YO, EG, PM.
 
 ## Design Principles
 

@@ -7,6 +7,7 @@ import {
     normalizeHeader,
     parseId,
     randomIdNumber,
+    truncatePlayerBase,
     type Game,
     type GameCode,
 } from "./games";
@@ -566,7 +567,7 @@ export function resolveIdForRow(
   let num: number;
 
   if (parsedExisting) {
-    if (parsedExisting.base) base = parsedExisting.base;
+    if (parsedExisting.base) base = truncatePlayerBase(parsedExisting.base);
     num = parsedExisting.num;
   } else {
     const taken = collectAllIds(rows, layout);
